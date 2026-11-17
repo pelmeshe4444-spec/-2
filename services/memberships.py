@@ -1,11 +1,14 @@
 import logging
+from datetime import timedelta
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 from aiohttp import ClientConnectorError
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from database.models import ClassJoinRequest, ClassMembership, Notification, SchoolClass, User, utc_now
+from database.models import Announcement, ClassJoinRequest, ClassMembership, Notification, SchoolClass, User, utc_now
+from services.announcements import audience
 from services.permissions import Conflict, Forbidden, UserError, audit
+from services.school_settings import school_settings
 
 
 log = logging.getLogger(__name__)
@@ -35,6 +38,9 @@ class Memberships:
             actor = await self.permissions.actor(session, uid)
             if self.permissions.is_owner(uid):
                 raise Forbidden()
+            settings = await school_settings(session, 'UTC')
+            if not settings['join_open']:
+                raise UserError('Приём заявок сейчас закрыт.')
             school = await session.get(SchoolClass, class_id)
             if not school or not school.is_active:
                 raise UserError('Класс недоступен.')
@@ -46,11 +52,17 @@ class Memberships:
                 if pending.class_id == class_id:
                     return pending
                 raise Conflict('У вас уже есть заявка на рассмотрении.')
+            if settings['join_retry_days']:
+                cutoff = utc_now() - timedelta(days=settings['join_retry_days'])
+                rejected = await session.scalar(select(ClassJoinRequest.id).where(ClassJoinRequest.user_id == actor.id,
+                    ClassJoinRequest.status == 'REJECTED', ClassJoinRequest.decided_at > cutoff).limit(1))
+                if rejected:
+                    raise UserError(f'Повторная заявка доступна через {settings["join_retry_days"]} дн. после отказа.')
             row = ClassJoinRequest(user_id=actor.id, class_id=class_id, pending_user_id=actor.id, status='PENDING')
             session.add(row)
             await session.flush()
             owner = await session.scalar(select(User).where(User.telegram_id == self.permissions.owner_id))
-            if owner:
+            if owner and settings['notify_owner']:
                 queue_notice(session, owner.id, 'join_request', f'Новая заявка в класс {school.name}. Откройте раздел «Заявки».', class_id)
             audit(session, actor, 'membership.requested', 'join_request', row.id)
             return row
@@ -79,13 +91,7 @@ class Memberships:
                     raise UserError('Выберите активный класс.')
                 row.class_id = school.id
             if decision == 'APPROVED':
-                if target.blocked:
-                    raise UserError('Сначала восстановите доступ пользователя.')
-                member = await session.get(ClassMembership, target.id)
-                if member is None:
-                    session.add(ClassMembership(user_id=target.id, class_id=row.class_id, notify_schedule=False))
-                else:
-                    member.class_id, member.approved_at, member.notify_schedule = row.class_id, utc_now(), False
+                await self._assign(session, target, school)
                 queue_notice(session, target.id, 'join_decision', f'Заявка одобрена. Ваш класс — {school.name}.', row.class_id)
             elif decision == 'BLOCKED':
                 target.blocked = True
@@ -96,6 +102,39 @@ class Memberships:
             row.status = decision
             audit(session, owner, f'membership.{decision.lower()}', 'join_request', row.id, f'class={row.class_id}')
             return row
+
+    async def _assign(self, session, user, school):
+        if user.blocked:
+            raise UserError('Сначала восстановите доступ пользователя.')
+        member = await session.get(ClassMembership, user.id)
+        if member and member.class_id == school.id:
+            return False
+        settings = await school_settings(session, 'UTC')
+        if member is None:
+            session.add(ClassMembership(user_id=user.id, class_id=school.id, notify_schedule=settings['notify_schedule']))
+        else:
+            member.class_id, member.approved_at = school.id, utc_now()
+        return True
+
+    async def set_membership(self, uid, target_id, class_id):
+        async with self.db.write() as session:
+            owner = await self.permissions.owner(session, uid)
+            target = await session.scalar(select(User).where(User.telegram_id == target_id))
+            if not target or target_id == uid:
+                raise UserError('Выберите другого пользователя.')
+            if class_id is None:
+                member = await session.get(ClassMembership, target.id)
+                if member is not None:
+                    await session.delete(member)
+                    queue_notice(session, target.id, 'membership', 'Владелец отозвал доступ к вашему классу.')
+                    audit(session, owner, 'membership.revoked', 'user', target.id, f'class={member.class_id}')
+            else:
+                school = await session.get(SchoolClass, class_id)
+                if not school or not school.is_active:
+                    raise UserError('Выберите активный класс.')
+                if await self._assign(session, target, school):
+                    queue_notice(session, target.id, 'membership', f'Ваш класс — {school.name}.', class_id)
+                    audit(session, owner, 'membership.assigned', 'user', target.id, f'class={class_id}')
 
     async def notification_preference(self, uid, enabled):
         async with self.db.write() as session:
@@ -117,10 +156,12 @@ class Memberships:
                         row.read_at = utc_now()
             return rows
 
-    async def flush(self, bot, limit=15):
+    async def flush(self, bot, limit=15, *, announcement_id=None):
         async with self.db.read() as session:
-            ids = list(await session.scalars(select(Notification.id).where(Notification.status == 'pending')
-                                             .order_by(Notification.id).limit(limit)))
+            pending = select(Notification.id).where(Notification.status == 'pending')
+            if announcement_id is not None:
+                pending = pending.where(Notification.announcement_id == announcement_id)
+            ids = list(await session.scalars(pending.order_by(Notification.id).limit(limit)))
         for notice_id in ids:
             async with self.db.write() as session:
                 row = await session.get(Notification, notice_id)
@@ -129,6 +170,9 @@ class Memberships:
                 user = await session.get(User, row.recipient_id)
                 member = await session.get(ClassMembership, user.id) if row.category == 'timetable' else None
                 eligible = row.category != 'timetable' or (member and member.class_id == row.class_id and member.notify_schedule)
+                if row.announcement_id:
+                    announcement = await session.get(Announcement, row.announcement_id)
+                    eligible = bool(await session.scalar(audience(announcement.class_ids).where(User.id == user.id)))
                 if user.blocked or not user.started_at or not eligible:
                     row.status = 'in_app'
                     continue
@@ -147,3 +191,9 @@ class Memberships:
             async with self.db.write() as session:
                 record = await session.get(Notification, notice_id)
                 record.status = status
+
+    async def recover_sending(self):
+        async with self.db.write() as session:
+            cutoff = utc_now() - timedelta(minutes=15)
+            await session.execute(update(Notification).where(Notification.status == 'sending', Notification.attempted_at < cutoff)
+                                  .values(status='uncertain'))

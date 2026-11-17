@@ -31,7 +31,12 @@ def totals(values):
 
 def profile(user):
     return {'id': user.telegram_id, 'username': user.username, 'name': user.full_name or f'Telegram {user.telegram_id}',
-            'started': user.started_at is not None, 'blocked': user.blocked}
+            'started': user.started_at is not None, 'blocked': user.blocked, 'registered_at': timestamp(user.created_at)}
+
+
+def audit_item(item, telegram_id):
+    return {'id': item.id, 'action': item.action, 'by': telegram_id, 'time': timestamp(item.timestamp),
+            'entity': item.entity_type, 'entity_id': item.entity_id, 'details': item.details}
 
 
 def schedule(value):

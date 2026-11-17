@@ -9,6 +9,7 @@ from services.directory import bounded, normalized
 from services.memberships import queue_notice
 from services.permissions import Conflict, Forbidden, UserError, audit
 from services.reports import time_value
+from services.school_settings import school_settings
 
 
 WEEK_ANCHOR = date(2026, 1, 5)
@@ -114,8 +115,15 @@ class Timetables:
     async def _slots(self, session, class_id):
         rows = await session.scalars(select(LessonTimeSlot).where(LessonTimeSlot.class_id == class_id)
                                      .order_by(LessonTimeSlot.shift, LessonTimeSlot.lesson_number))
-        return [{'shift': row.shift, 'lesson_number': row.lesson_number, 'start_time': row.start_time,
-                 'end_time': row.end_time} for row in rows]
+        slots = [{'shift': row.shift, 'lesson_number': row.lesson_number, 'start_time': row.start_time,
+                  'end_time': row.end_time} for row in rows]
+        if slots:
+            return slots
+        settings = await school_settings(session, 'UTC')
+        hour, minute = map(int, settings['lesson_start'].split(':'))
+        end_hour, end_minute = divmod(hour * 60 + minute + settings['lesson_minutes'], 60)
+        return [{'shift': 'Стандартные звонки', 'lesson_number': 1, 'start_time': settings['lesson_start'],
+                 'end_time': f'{end_hour:02d}:{end_minute:02d}'}]
 
     async def editor(self, uid, class_id, cycle, starts=None):
         async with self.db.read() as session:

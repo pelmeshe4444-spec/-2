@@ -43,12 +43,16 @@ class Permissions:
         return await self.actor(session, telegram_id)
 
     async def for_class(self, session, telegram_id: int, class_id: int, *, history=False, recipient=False,
-                        allow_archived=False):
+                        correction=False, statistics=False, allow_archived=False):
         actor = await self.actor(session, telegram_id)
         if not self.is_owner(telegram_id):
             model = ReportRecipient if recipient else ManagerAssignment
             assignment = await session.get(model, (actor.id, class_id))
-            if assignment is None or (history and not recipient and not assignment.can_view_history):
+            if assignment is None or (not recipient and (
+                (history and not (assignment.can_view_history or assignment.can_edit_history))
+                or (correction and not assignment.can_edit_history)
+                or (statistics and not assignment.can_view_statistics)
+            )):
                 raise Forbidden()
         school_class = await session.get(SchoolClass, class_id)
         if school_class is None or (not school_class.is_active and not allow_archived):
@@ -66,7 +70,7 @@ class Permissions:
             model = ReportRecipient if mode == 'receive' else ManagerAssignment
             query = query.join(model, model.class_id == SchoolClass.id).where(model.user_id == actor.id)
             if mode == 'history':
-                query = query.where(ManagerAssignment.can_view_history)
+                query = query.where(ManagerAssignment.can_view_history | ManagerAssignment.can_edit_history)
         return list(await session.scalars(query))
 
     async def has_access(self, session, telegram_id: int) -> bool:

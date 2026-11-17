@@ -12,6 +12,7 @@ from database.models import (
     Student, User, UserRole, utc_now,
 )
 from services.permissions import UserError, audit
+from services.school_settings import school_settings, school_zone
 
 
 def normalized(value: str) -> str:
@@ -55,7 +56,7 @@ class Directory:
         self.db, self.permissions, self.zone = db, permissions, zone
 
     def today(self):
-        return datetime.now(self.zone).date()
+        return datetime.now(school_zone(self.zone)).date()
 
     async def register(self, telegram_id, username, full_name, *, started=True):
         async with self.db.write() as session:
@@ -84,7 +85,9 @@ class Directory:
             school_class = SchoolClass(name=name, name_key=normalized(name))
             session.add(school_class)
             await session.flush()
-            session.add(ReportSchedule(class_id=school_class.id, timezone=self.zone.key))
+            defaults = await school_settings(session, self.zone.key)
+            session.add(ReportSchedule(class_id=school_class.id, timezone=defaults['timezone'],
+                                       time=defaults['report_time'], weekdays=''.join(map(str, defaults['school_days']))))
             audit(session, actor, 'class.added', 'class', school_class.id)
             return school_class
 
@@ -196,9 +199,13 @@ class Directory:
             audit(session, actor, 'student.restored', 'student', student_id, f'class={student.class_id}')
             return student
 
-    async def update_class(self, telegram_id, class_id, *, name=None, archive=False):
+    async def update_class(self, telegram_id, class_id, *, name=None, archive=False, restore=False):
         async with self.db.write() as session:
-            actor, school_class = await self.owner_class(session, telegram_id, class_id)
+            if restore:
+                actor, school_class = await self.permissions.for_class(session, telegram_id, class_id, allow_archived=True)
+                await self.permissions.owner(session, telegram_id)
+            else:
+                actor, school_class = await self.owner_class(session, telegram_id, class_id)
             if name is not None:
                 name = bounded(name, 32)
                 key = normalized(name)
@@ -211,7 +218,10 @@ class Directory:
                 school_class.is_active, school_class.archived_on = False, self.today()
                 schedule = await session.scalar(select(ReportSchedule).where(ReportSchedule.class_id == class_id))
                 schedule.is_enabled = False
-            audit(session, actor, 'class.archived' if archive else 'class.updated', 'class', class_id)
+            if restore:
+                school_class.is_active, school_class.archived_on = True, None
+            action = 'class.restored' if restore else 'class.archived' if archive else 'class.updated'
+            audit(session, actor, action, 'class', class_id)
             return school_class
 
     async def manage_user(self, telegram_id, target_id, blocked=None):
@@ -268,7 +278,12 @@ class Directory:
     async def access(self, telegram_id, target_id, class_id, operation):
         async with self.db.write() as session:
             actor, _ = await self.owner_class(session, telegram_id, class_id)
-            if operation not in {'manager_add', 'manager_remove', 'recipient_add', 'recipient_remove', 'history_on', 'history_off'}:
+            permission_fields = {'history': 'can_view_history', 'correction': 'can_edit_history',
+                                 'statistics': 'can_view_statistics', 'timetable': 'can_edit_timetable',
+                                 'report_view': 'can_view_reports'}
+            permission, _, setting = operation.rpartition('_')
+            permission_field = permission_fields.get(permission) if setting in ('on', 'off') else None
+            if not permission_field and operation not in {'manager_add', 'manager_remove', 'recipient_add', 'recipient_remove'}:
                 raise UserError('Действие недоступно.')
             recipient = operation.startswith('recipient_')
             if not 0 < target_id < 2**52 or (self.permissions.is_owner(target_id) and not recipient):
@@ -304,8 +319,11 @@ class Directory:
                 remains = await session.scalar(select(model.user_id).where(model.user_id == target.id).limit(1))
                 if remains is None and role_row is not None:
                     await session.delete(role_row)
-            elif operation in {'history_on', 'history_off'}:
-                assignment.can_view_history = operation == 'history_on'
+            elif permission_field:
+                enabled = setting == 'on'
+                if getattr(assignment, permission_field) == enabled:
+                    return target, False
+                setattr(assignment, permission_field, enabled)
             else:
                 raise UserError('Действие недоступно.')
             audit(session, actor, f'access.{operation}', 'user', target.id, f'class={class_id}')
@@ -319,12 +337,13 @@ class Directory:
                                          .where(model.class_id == class_id).order_by(User.id))
             return school_class, list(rows)
 
-    async def audit_page(self, telegram_id, page, size):
+    async def audit_page(self, telegram_id, page, size, *, subject=None):
         async with self.db.read() as session:
             await self.permissions.owner(session, telegram_id)
-            count = await session.scalar(select(func.count(AuditLog.id)))
+            predicate = (AuditLog.entity_type == 'user', AuditLog.entity_id == subject) if subject is not None else ()
+            count = await session.scalar(select(func.count(AuditLog.id)).where(*predicate))
             page = min(page, max(0, (count - 1) // size))
-            query = (select(AuditLog, User.telegram_id).outerjoin(User, AuditLog.actor_id == User.id)
+            query = (select(AuditLog, User.telegram_id).outerjoin(User, AuditLog.actor_id == User.id).where(*predicate)
                      .order_by(AuditLog.id.desc()).offset(page * size).limit(size))
             return list(await session.execute(query)), page, count
 

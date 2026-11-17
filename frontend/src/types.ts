@@ -1,7 +1,7 @@
 export type Role = 'OWNER' | 'MANAGER' | 'REPORT_RECIPIENT' | 'CLASS_MEMBER' | 'USER'
-export interface Person { id: number; name: string; username: string | null; started: boolean; blocked: boolean }
-export interface SchoolClass { id: number; name: string; active: boolean; can_history: boolean; can_edit_timetable?: boolean }
-export interface Me { user: Person; roles: Role[]; school: string; today: string; timezone: string; sqlite: boolean; managed: SchoolClass[]; reports: SchoolClass[]; member: SchoolClass | null }
+export interface Person { id: number; name: string; username: string | null; started: boolean; blocked: boolean; registered_at: string }
+export interface SchoolClass { id: number; name: string; active: boolean; can_history: boolean; can_edit_timetable?: boolean; can_edit_history?: boolean; can_view_statistics?: boolean; can_view_reports?: boolean }
+export interface Me { user: Person; roles: Role[]; school: string; system_name: string; join_open: boolean; statistics_days: 1 | 7 | 30; today: string; timezone: string; sqlite: boolean; managed: SchoolClass[]; reports: SchoolClass[]; member: SchoolClass | null }
 export interface Entry { id: number; name: string; status: number; reason: string | null; version: string; author: string | null; updated_at: string | null }
 export interface Attendance { class: SchoolClass; day: string; counts: number[]; writable: boolean; entries: Entry[] }
 export interface Student { id: number; name: string; class_id: number; active: boolean; updated_at: string; status: number; marked_at: string | null }

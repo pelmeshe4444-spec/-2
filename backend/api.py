@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from time import monotonic
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -15,19 +16,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend import presentation as view
+from backend.admin_routes import admin_routes
 from backend.auth import InvalidInitData, TelegramAuth
-from backend.schemas import (AccessInput, BlockInput, ClassInput, MarkInput, NamesInput, ScheduleInput,
+from backend.schemas import (AdminAccessInput, BlockInput, ClassInput, MarkInput, NamesInput, ScheduleInput,
                              SendInput, SettingsInput, StudentInput, UserInput)
 from backend.school_routes import school_routes
 from config import ROOT
 from database.models import AttendanceChange, ClassMembership, ManagerAssignment, ReportRecipient, SchoolClass, SchoolSettings, User
 from services.application import AttendanceApplication
-from services.attendance import Status, counts, parse_date, roster
+from services.attendance import Status, counts, parse_date, period_days, roster
 from services.directory import bounded, parse_students
 from services.permissions import Conflict, Forbidden, UserError, audit
-from services.reports import detailed_report, excel_report
+from services.reports import detailed_report, excel_report, time_value
+from services.school_settings import request_zone, school_settings, school_zone
+from services.system_status import record_event
 
 
 log = logging.getLogger(__name__)
@@ -96,7 +101,24 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
             return JSONResponse({'detail': 'Запрос слишком большой.'}, status_code=413)
         if request.scope['path'].startswith('/api/v1/'):
             request.scope['path'] = '/api/' + request.scope['path'][8:]
-        response = await call_next(request)
+        zone = None
+        is_api = request.scope['path'].startswith('/api/')
+        try:
+            if is_api and (desktop is not None or request.headers.get('Authorization', '').startswith('tma ')):
+                async with db.read() as session:
+                    settings = await school_settings(session, config.zone.key)
+                zone = request_zone.set(ZoneInfo(settings['timezone']))
+            response = await call_next(request)
+        except Exception as exc:
+            if not is_api:
+                raise
+            log.error('Ошибка API Attendance (%s)', type(exc).__name__)
+            if not isinstance(exc, (SQLAlchemyError, OSError)):
+                await record_event(db, 'backend', False)
+            response = JSONResponse({'detail': 'Сервер временно недоступен.'}, status_code=503)
+        finally:
+            if zone is not None:
+                request_zone.reset(zone)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         telegram_origin = '' if desktop is not None else ' https://telegram.org'
@@ -149,6 +171,7 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     Account = Annotated[int, Depends(active_account)]
     Owner = Annotated[int, Depends(owner_account)]
     school_routes(api, core, Account, Owner, telegram_sender)
+    admin_routes(api, core, config, Owner, telegram_sender)
     if config.webhook_secret or config.scheduler_secret:
         from backend.cloud_routes import cloud_routes
         cloud_routes(api, core, config, telegram_sender)
@@ -183,17 +206,25 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
             managed = await core.permissions.classes(session, uid)
             received = [] if owner else await core.permissions.classes(session, uid, 'receive')
             history = {item.id for item in await core.permissions.classes(session, uid, 'history')}
-            school = await session.get(SchoolSettings, 1)
+            settings = await school_settings(session, config.zone.key)
             member = await session.get(ClassMembership, user.id)
             member_class = await session.get(SchoolClass, member.class_id) if member and not user.blocked else None
             member_class = member_class if member_class and member_class.is_active else None
+            assignments = {} if owner else {row.class_id: row for row in await session.scalars(select(ManagerAssignment)
+                                                                 .where(ManagerAssignment.user_id == user.id))}
         roles = ['OWNER'] if owner else [role for role, classes in (('MANAGER', managed), ('REPORT_RECIPIENT', received)) if classes]
         if member_class and not owner:
             roles.append('CLASS_MEMBER')
-        return {'user': view.profile(user), 'roles': roles or ['USER'], 'school': school.name if school and roles else 'Школа',
-                'today': core.attendance.today(), 'timezone': config.zone.key, 'sqlite': db.engine.dialect.name == 'sqlite',
-                'managed': [view.school_class(item, can_history=item.id in history) for item in managed],
-                'reports': [view.school_class(item) for item in received],
+        viewer_ids = {class_id for class_id, assignment in assignments.items() if assignment.can_view_reports}
+        report_classes = {item.id: item for item in [*received, *(item for item in managed if item.id in viewer_ids)]}
+        return {'user': view.profile(user), 'roles': roles or ['USER'], 'school': settings['school'],
+                'system_name': settings['system_name'], 'join_open': settings['join_open'], 'statistics_days': settings['statistics_days'],
+                'today': core.attendance.today(), 'timezone': settings['timezone'], 'sqlite': db.engine.dialect.name == 'sqlite',
+                'managed': [{**view.school_class(item, can_history=item.id in history),
+                             'can_edit_history': owner or assignments[item.id].can_edit_history,
+                             'can_view_statistics': owner or assignments[item.id].can_view_statistics} for item in managed],
+                'reports': [{**view.school_class(item), 'can_view_reports': item.id in viewer_ids}
+                            for item in sorted(report_classes.values(), key=lambda row: row.name_key)],
                 'member': view.school_class(member_class, can_history=False) if member_class else None}
 
     @api.get('/api/classes')
@@ -214,6 +245,10 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     @api.delete('/api/classes/{class_id}')
     async def archive_class(class_id: int, uid: Owner):
         return view.school_class(await core.directory.update_class(uid, class_id, archive=True))
+
+    @api.post('/api/classes/{class_id}/restore')
+    async def restore_class(class_id: int, uid: Owner):
+        return view.school_class(await core.directory.update_class(uid, class_id, restore=True))
 
     @api.get('/api/classes/{class_id}/access')
     async def class_access(class_id: int, uid: Owner):
@@ -259,12 +294,16 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     async def read_attendance(class_id: int, uid: Account, day: str = ''):
         day = day_or_today(day)
         async with db.read() as session:
-            _, school = await core.attendance.scope(session, uid, class_id, day)
+            actor, school = await core.attendance.scope(session, uid, class_id, day)
             entries = [] if school.archived_on and day > school.archived_on else await roster(session, class_id, day)
             mark_users = {entry.mark.marked_by for entry in entries if entry.mark}
             authors = {user.id: user.full_name or user.username or 'Пользователь Telegram' for user in
                        await session.scalars(select(User).where(User.id.in_(mark_users)))}
-        writable = school.is_active and (core.permissions.is_owner(uid) or day == core.attendance.today())
+            can_correct = core.permissions.is_owner(uid)
+            if not can_correct and day < core.attendance.today():
+                assignment = await session.get(ManagerAssignment, (actor.id, class_id))
+                can_correct = bool(assignment and assignment.can_edit_history)
+        writable = school.is_active and (can_correct or day == core.attendance.today())
         return {'class': view.school_class(school), 'day': day, 'counts': view.totals(counts(entries)), 'writable': writable,
                 'entries': [view.attendance(entry, authors) for entry in entries]}
 
@@ -296,17 +335,22 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
         return {'counts': view.totals(counts(entries))}
 
     @api.get('/api/users')
+    @api.get('/api/admin/users')
     async def users(uid: Owner, page: Annotated[int, Query(ge=0, le=100000)] = 0):
         users, roles, page, total = await core.directory.users(uid, page, 50)
         async with db.read() as session:
             await core.permissions.owner(session, uid)
             by_user = {}
-            for model in (ManagerAssignment, ReportRecipient):
+            members = set()
+            for model in (ManagerAssignment, ReportRecipient, ClassMembership):
                 rows = await session.execute(select(model.user_id, SchoolClass.name).join(SchoolClass, SchoolClass.id == model.class_id)
                                              .where(model.user_id.in_([item.id for item in users]), SchoolClass.is_active))
                 for user_id, name in rows:
                     by_user.setdefault(user_id, set()).add(name)
-        return {'users': [{**view.profile(item), 'roles': ['OWNER'] if item.telegram_id == uid else roles.get(item.id, ['USER']),
+                    if model is ClassMembership:
+                        members.add(user_id)
+        return {'users': [{**view.profile(item), 'roles': ['OWNER'] if item.telegram_id == uid else
+                           (roles.get(item.id, []) + (['CLASS_MEMBER'] if item.id in members else []) or ['USER']),
                            'classes': sorted(by_user.get(item.id, set()))} for item in users], 'page': page, 'total': total}
 
     @api.post('/api/users')
@@ -319,17 +363,25 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
         if user is None:
             raise HTTPException(404, 'Пользователь недоступен.')
         async with db.read() as session:
-            editors = set(await session.scalars(select(ManagerAssignment.class_id).where(
-                ManagerAssignment.user_id == user.id, ManagerAssignment.can_edit_timetable)))
-        return {**view.profile(user), 'managed': [{**view.school_class(item, can_history=history), 'can_edit_timetable': item.id in editors} for item, history in managed],
-                'received': [view.school_class(item) for item in received]}
+            assignments = {row.class_id: row for row in await session.scalars(select(ManagerAssignment)
+                                                                            .where(ManagerAssignment.user_id == user.id))}
+            member = await session.get(ClassMembership, user.id)
+            school = await session.get(SchoolClass, member.class_id) if member else None
+        return {**view.profile(user), 'managed': [{**view.school_class(item, can_history=history),
+                   'can_edit_timetable': assignments[item.id].can_edit_timetable,
+                   'can_edit_history': assignments[item.id].can_edit_history,
+                   'can_view_statistics': assignments[item.id].can_view_statistics,
+                   'can_view_reports': assignments[item.id].can_view_reports} for item, history in managed],
+                'received': [view.school_class(item) for item in received],
+                'member': view.school_class(school) if school else None}
 
     @api.patch('/api/users/{target}')
     async def block_user(target: int, body: BlockInput, uid: Owner):
         return view.profile(await core.directory.manage_user(uid, target, body.blocked))
 
     @api.post('/api/users/{target}/access')
-    async def change_access(target: int, body: AccessInput, uid: Owner):
+    @api.patch('/api/admin/users/{target}/roles')
+    async def change_access(target: int, body: AdminAccessInput, uid: Owner):
         user, changed = await core.directory.access(uid, target, body.class_id, body.operation)
         if changed and target != uid and body.operation.endswith('_add') and user.started_at and not user.blocked:
             try:
@@ -355,7 +407,10 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     @api.post('/api/classes/{class_id}/send')
     async def send_report(class_id: int, body: SendInput, uid: Owner):
         _, schedule = await core.reports.schedule(uid, class_id)
-        day = core.attendance.today()
+        today = core.attendance.today()
+        day = body.day or today
+        if day > today:
+            raise UserError('Нельзя отправить отчёт за будущую дату.')
         key = 'manual_' + body.request_id
         async with telegram_sender() as bot:
             await core.reports.dispatch(bot, schedule.id, day, key, manual_actor=uid)
@@ -373,42 +428,94 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
 
     @api.get('/api/classes/{class_id}/report')
     async def report(class_id: int, uid: Account, day: str = ''):
-        if core.permissions.is_owner(uid):
-            chosen = day_or_today(day)
-            school, entries = await core.attendance.daily(uid, class_id, chosen)
-            parts = detailed_report(school.name, chosen, entries, datetime.now(config.zone))
-            return {'day': chosen, 'dates': [], 'parts': view.report_text(parts)}
+        owner = core.permissions.is_owner(uid)
+        async with db.read() as session:
+            actor = await core.permissions.actor(session, uid)
+            assignment = None if owner else await session.get(ManagerAssignment, (actor.id, class_id))
+            if owner or (assignment and assignment.can_view_reports):
+                chosen = day_or_today(day)
+                if chosen > core.attendance.today():
+                    raise UserError('Дата ещё не наступила.')
+                _, school = await core.permissions.for_class(session, uid, class_id, allow_archived=owner)
+                entries = [] if school.archived_on and chosen > school.archived_on else await roster(session, class_id, chosen)
+                parts = detailed_report(school.name, chosen, entries, datetime.now(school_zone(config.zone)))
+                return {'day': chosen, 'dates': [], 'parts': view.report_text(parts)}
         available = await core.reports.available(uid, class_id, limit=90)
         selected = parse_date(day) if day else available[0][0] if available else None
         parts = next((parts for date, parts in available if date == selected), [])
         return {'day': selected, 'dates': [date for date, _ in available], 'parts': view.report_text(parts)}
 
     @api.get('/api/classes/{class_id}/stats')
-    async def stats(class_id: int, start: str, end: str, uid: Owner):
-        school, items = await core.attendance.period(uid, class_id, parse_date(start), parse_date(end), owner_only=True)
+    async def stats(class_id: int, start: str, end: str, uid: Account):
+        school, items = await core.attendance.period(uid, class_id, parse_date(start), parse_date(end), statistics=True)
         timeline = [{'day': day, 'counts': view.totals(counts(entries))} for day, entries in items.items()]
         combined = [sum(point['counts'][i] for point in timeline) for i in range(len(Status))]
         return {'class': view.school_class(school), 'counts': combined, 'timeline': timeline}
 
+    @api.get('/api/admin/stats/comparison')
+    async def comparison(start: str, end: str, uid: Owner):
+        first, last = parse_date(start), parse_date(end)
+        period_days(first, last, core.attendance.today())
+        async with db.read() as session:
+            available = await core.permissions.classes(session, uid)
+        result = []
+        for school in available:
+            _, entries = await core.attendance.period(uid, school.id, first, last, owner_only=True)
+            collected = [view.totals(counts(day)) for day in entries.values()]
+            result.append({'class': view.school_class(school),
+                           'counts': [sum(day[index] for day in collected) for index in range(len(Status))]})
+        return result
+
     @api.get('/api/audit')
+    @api.get('/api/admin/audit-logs')
     async def audit_log(uid: Owner, page: Annotated[int, Query(ge=0, le=100000)] = 0):
         rows, page, total = await core.directory.audit_page(uid, page, 20)
-        return {'page': page, 'total': total, 'items': [
-            {'id': item.id, 'action': item.action, 'by': telegram_id, 'time': view.timestamp(item.timestamp),
-             'entity': item.entity_type, 'entity_id': item.entity_id, 'details': item.details} for item, telegram_id in rows]}
+        return {'page': page, 'total': total, 'items': [view.audit_item(item, actor) for item, actor in rows]}
+
+    @api.get('/api/admin/users/{target}/audit-logs')
+    async def user_audit_log(target: int, uid: Owner, page: Annotated[int, Query(ge=0, le=100000)] = 0):
+        user, _, _ = await core.directory.user_details(uid, target)
+        if not user:
+            raise HTTPException(404, 'Пользователь недоступен.')
+        rows, page, total = await core.directory.audit_page(uid, page, 20, subject=user.id)
+        return {'page': page, 'total': total, 'items': [view.audit_item(item, actor) for item, actor in rows]}
+
+    @api.get('/api/settings')
+    async def read_settings(uid: Owner):
+        async with db.read() as session:
+            return await school_settings(session, config.zone.key)
 
     @api.put('/api/settings')
     async def settings(body: SettingsInput, uid: Owner):
         name = bounded(body.school, 120)
+        values = body.model_dump(exclude_none=True, exclude={'school'})
+        if 'system_name' in values:
+            values['system_name'] = bounded(values['system_name'], 40)
+        if 'timezone' in values:
+            try:
+                values['timezone'] = ZoneInfo(values['timezone']).key
+            except (ValueError, ZoneInfoNotFoundError):
+                raise UserError('Укажите часовой пояс IANA, например Asia/Tashkent.') from None
+        if 'school_days' in values:
+            values['school_days'] = sorted(set(values['school_days']))
+        for key in ('lesson_start', 'report_time'):
+            if key in values:
+                values[key] = time_value(values[key])
         async with db.write() as session:
             actor = await core.permissions.owner(session, uid)
+            current = await school_settings(session, config.zone.key)
+            current.update(values)
+            hour, minute = map(int, current['lesson_start'].split(':'))
+            if hour * 60 + minute + current['lesson_minutes'] >= 1440:
+                raise UserError('Урок должен закончиться в тот же календарный день.')
             pref = await session.get(SchoolSettings, 1)
             if pref is None:
-                session.add(SchoolSettings(id=1, name=name))
-            else:
-                pref.name = name
+                pref = SchoolSettings(id=1)
+                session.add(pref)
+            pref.name = name
+            pref.preferences = {**(pref.preferences or {}), **values}
             audit(session, actor, 'settings.updated', 'school')
-        return {'school': name}
+        return {**current, 'school': name}
 
     def binary(name, media, data):
         return Response(data, media_type=media, headers={'Content-Disposition': f'attachment; filename="{name}"',

@@ -72,6 +72,9 @@ class ManagerAssignment(Base):
     class_id: Mapped[int] = mapped_column(ForeignKey('classes.id'), primary_key=True, index=True)
     can_view_history: Mapped[bool] = mapped_column(default=False)
     can_edit_timetable: Mapped[bool] = mapped_column(default=False, server_default=false())
+    can_edit_history: Mapped[bool] = mapped_column(default=False, server_default=false())
+    can_view_statistics: Mapped[bool] = mapped_column(default=False, server_default=false())
+    can_view_reports: Mapped[bool] = mapped_column(default=False, server_default=false())
 
 
 class ReportRecipient(Base):
@@ -146,6 +149,7 @@ class SchoolSettings(Base):
     __tablename__ = 'school_settings'
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))
+    preferences: Mapped[dict | None] = mapped_column(JSON)
 
 
 class ClassMembership(Base):
@@ -264,11 +268,29 @@ class AttendanceChange(Base):
     changed_at: Mapped[datetime] = mapped_column(default=utc_now)
 
 
+class Announcement(Base):
+    __tablename__ = 'announcements'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[str] = mapped_column(String(32), unique=True)
+    class_ids: Mapped[list] = mapped_column(JSON)
+    message: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class SystemEvent(Base):
+    __tablename__ = 'system_events'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operation: Mapped[str] = mapped_column(String(24))
+    success: Mapped[bool]
+    occurred_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
 class Notification(Base):
     __tablename__ = 'notifications'
     id: Mapped[int] = mapped_column(primary_key=True)
     recipient_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
     class_id: Mapped[int | None] = mapped_column(ForeignKey('classes.id'))
+    announcement_id: Mapped[int | None] = mapped_column(ForeignKey('announcements.id'), index=True)
     category: Mapped[str] = mapped_column(String(24))
     message: Mapped[str] = mapped_column(String(500))
     status: Mapped[str] = mapped_column(String(16), index=True)

@@ -74,6 +74,16 @@ legend { font-weight: 600; font-size: 13px; margin-bottom: 8px; }
 .sidebar { padding-bottom: calc(33px + var(--safe-bottom, 0px)); }
 .attendance-watermark { position: fixed; left: max(12px, var(--safe-left, 0px), env(safe-area-inset-left, 0px)); bottom: calc(10px + max(var(--safe-bottom, 0px), env(safe-area-inset-bottom, 0px))); font-size: 11px; font-weight: 400; line-height: 14px; opacity: .3; color: var(--muted); pointer-events: none; user-select: none; z-index: 5; }
 .app-shell > .attendance-watermark { color: var(--sidebar-ink); }
+.owner-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; margin-bottom: 18px; }
+.owner-metric { min-width: 0; min-height: 82px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; padding: 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.owner-metric:hover { border-color: var(--muted); }
+.owner-metric strong, .owner-metric small { display: block; }
+.owner-metric strong { font-size: 22px; line-height: 1.25; }
+.owner-metric small { color: var(--muted); line-height: 1.35; }
+.owner-metric > svg { color: var(--muted); }
+.owner-sections h2 { margin: 0 0 9px; font-size: 1rem; }
+.choice-list { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.choice-list label { display: flex; align-items: center; gap: 6px; }
 .work-area { margin-left: var(--sidebar-width); }
 .topbar { position: sticky; top: 0; z-index: 4; min-height: 69px; padding: calc(10px + var(--safe-top, 0px)) 30px 10px; background: var(--surface); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .top-title, .top-actions { display: flex; align-items: center; gap: 12px; }
