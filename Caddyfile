@@ -1,0 +1,7 @@
+{$ATTENDANCE_DOMAIN} {
+	request_body {
+		max_size 64KB
+	}
+	encode zstd gzip
+	reverse_proxy web:8000
+}

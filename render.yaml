@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: attendance
+    runtime: python
+    plan: free
+    healthCheckPath: /api/health
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m alembic upgrade head && python -m uvicorn backend.render:app --host 0.0.0.0 --port $PORT --no-access-log
+    envVars:
+      - key: PYTHON_VERSION
+        value: '3.13.5'
+      - key: TIMEZONE
+        value: Asia/Tashkent
+      - key: DATABASE_URL
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: MINI_APP_URL
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: SCHEDULER_SECRET
+        sync: false

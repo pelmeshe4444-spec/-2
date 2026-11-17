@@ -1,0 +1,61 @@
+x-app: &app
+  image: attendance-app:local
+  build: .
+  restart: unless-stopped
+  environment:
+    BOT_TOKEN: ${BOT_TOKEN:?Set BOT_TOKEN}
+    OWNER_ID: ${OWNER_ID:?Set OWNER_ID}
+    DATABASE_URL: postgresql+asyncpg://attendance:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db/attendance
+    TIMEZONE: ${TIMEZONE:-Asia/Tashkent}
+    MINI_APP_URL: https://${ATTENDANCE_DOMAIN:?Set ATTENDANCE_DOMAIN}
+    INIT_DATA_TTL: ${INIT_DATA_TTL:-3600}
+    FORWARDED_ALLOW_IPS: '*'
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: attendance
+      POSTGRES_DB: attendance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD, pg_isready, -U, attendance]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  web:
+    <<: *app
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+  bot:
+    <<: *app
+    command: [python, main.py]
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ATTENDANCE_DOMAIN: ${ATTENDANCE_DOMAIN:?Set ATTENDANCE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres:
+  caddy_data:
+  caddy_config:
