@@ -12,6 +12,18 @@ jobs:
   build-and-smoke-test:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: attendance
+          POSTGRES_USER: attendance
+          POSTGRES_PASSWORD: attendance-ci
+        options: >-
+          --health-cmd "pg_isready -U attendance -d attendance"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - name: Build the Render Docker image
@@ -19,7 +31,9 @@ jobs:
       - name: Verify the container binds to PORT and serves the API and frontend
         run: |
           docker run --detach --name attendance-ci --publish 127.0.0.1:14183:14183 \
+            --network "${{ job.services.postgres.network }}" \
             --env PORT=14183 --env OWNER_ID=101 --env BOT_TOKEN=123456:ci-smoke-placeholder \
+            --env DATABASE_URL=postgresql://attendance:attendance-ci@postgres/attendance \
             attendance:ci
           curl --fail --silent --show-error --retry 12 --retry-delay 2 --retry-all-errors \
             --connect-timeout 2 --max-time 5 \
