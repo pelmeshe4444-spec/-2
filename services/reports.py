@@ -400,6 +400,7 @@ class Reports:
         await self.retry_due(bot)
         async with self.db.read() as session:
             schedules = list(await session.scalars(select(ReportSchedule).where(ReportSchedule.is_enabled)))
+        success = True
         for schedule in schedules:
             try:
                 local = now.astimezone(ZoneInfo(schedule.timezone))
@@ -410,4 +411,6 @@ class Reports:
                 if self.due_on(schedule, 'scheduled', previous, local):
                     await self.dispatch(bot, schedule.id, previous, 'scheduled', now=now)
             except Exception as exc:
+                success = False
                 log.error('Ошибка расписания %s (%s)', schedule.id, type(exc).__name__)
+        return success

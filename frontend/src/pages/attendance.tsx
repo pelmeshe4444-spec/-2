@@ -1,11 +1,11 @@
-import { ArrowDownToLine, ArrowRight, CalendarDays, Check, CircleCheck, ClipboardCheck, ClipboardList,
-  FileText, GraduationCap, History, MessageSquare, Search, UsersRound } from 'lucide-react'
+import { ArrowDownToLine, ArrowRight, Check, ClipboardCheck, ClipboardList,
+  FileText, GraduationCap, MessageSquare, Search, UsersRound } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, download } from '../api'
-import { activities, attendanceRate, colors, formatDay, formatTime, initials, statuses, statusOrder, sum, toDay } from '../domain'
-import type { Attendance, AuditItem, Entry, Page, SchoolClass } from '../types'
+import { attendanceRate, colors, formatDay, formatTime, initials, statuses, statusOrder, sum, toDay } from '../domain'
+import type { Attendance, Entry, SchoolClass } from '../types'
 import { DayLessons, type Timetable } from './timetable'
 import { Button, ClassSelect, Confirm, Empty, Failure, Modal, PageTitle, Panel, Pending, StatusBadge,
   useAction, useClass, useData, useSession } from '../ui'
@@ -31,47 +31,29 @@ function Donut({ counts }: { counts: number[] }) {
   </div><ul className="legend">{statusOrder.map(i => <li key={i}><span style={{ background: colors[i] }} /><span>{statuses[i].group}</span><strong>{counts[i]}</strong></li>)}</ul></div>
 }
 
-export function Dashboard() {
+export function ManagerDashboard() {
   const me = useSession()
-  const owner = me.roles.includes('OWNER')
   const selected = useClass(me.managed)
   const current = me.managed.find(item => item.id === selected.value)
   const daily = useData<Attendance>(current ? `/classes/${current.id}/attendance` : null, 12000)
-  const events = useData<Page<AuditItem>>(owner ? '/audit?page=0' : null, 20000)
   const counts = daily.data?.counts ?? zero
   const total = sum(counts)
   const marked = total - counts[0]
   return <>
-    <PageTitle title={owner ? 'Обзор посещаемости' : 'Мой класс'} subtitle={formatDay(me.today, true)}>
+    <PageTitle title="Мой класс" subtitle={formatDay(me.today, true)}>
       <ClassSelect items={me.managed} {...selected} />
     </PageTitle>
-    {!current ? <Panel><Empty title="Добавьте первый класс" description="После добавления учеников здесь появятся отметки и статистика." />
-      <div className="panel-footer"><Button asChild><Link to="/classes">Управление классами</Link></Button></div></Panel> : <>
+    {!current ? <Panel><Empty title="Нет назначенных классов" /></Panel> : <>
       <section className="hero"><div className="hero-copy"><div className="hero-meta"><GraduationCap size={17} /> {me.school} <span /> {current.name}</div><h2>Посещаемость сегодня</h2>
         <p>{daily.data ? <>Отмечено <b>{marked} из {total}</b> учеников</> : 'Сводка по выбранному классу'}</p>
         <div className="hero-progress" role="progressbar" aria-label="Ученики с отметкой" aria-valuenow={total ? Math.round(marked / total * 100) : 0}><span style={{ width: `${total ? marked / total * 100 : 0}%` }} /></div>
-      </div><Button className="hero-button" asChild><Link to={`/attendance?class=${current.id}`}><ClipboardCheck size={19} />{owner ? 'Открыть отметки' : 'Начать отметку'}<ArrowRight size={18} /></Link></Button></section>
+      </div><Button className="hero-button" asChild><Link to={`/attendance?class=${current.id}`}><ClipboardCheck size={19} />Начать отметку<ArrowRight size={18} /></Link></Button></section>
       {daily.isPending ? <Panel><Pending /></Panel> : daily.error ? <Failure error={daily.error} retry={() => daily.refetch()} /> : <Counts counts={counts} />}
-      <div className={owner ? 'dashboard-grid' : 'dashboard-grid single'}>
+      <div className="dashboard-grid single">
         <Panel title="Распределение отметок" subtitle="Сегодня, выбранный класс"><Donut counts={counts} /></Panel>
-        {owner && <Panel title="Последние действия" actions={<Button asChild size="small" variant="ghost"><Link to="/audit">Журнал <ArrowRight size={15} /></Link></Button>}>
-          {events.isPending ? <Pending /> : events.error ? <Failure error={events.error} /> : <Activity items={events.data?.items.slice(0, 5) ?? []} />}
-        </Panel>}
       </div>
     </>}
-    {owner && <Panel title="Управление"><div className="quick-links">{[
-      ['/students', 'Ученики', GraduationCap], ['/classes', 'Классы', UsersRound], ['/users', 'Пользователи', UsersRound],
-      ['/access', 'Права доступа', CircleCheck], ['/requests', 'Заявки', FileText], ['/reports', 'Отчёты', FileText],
-      ['/lessons', 'Уроки', CalendarDays], ['/schedule', 'Автоматические отчёты', CalendarDays], ['/history', 'История', History],
-    ].map(([href, label, Icon]) => { const Item = Icon as typeof FileText; return <Link to={href as string} key={href as string}><Item size={19} /><span>{label as string}</span><ArrowRight size={15} /></Link> })}</div></Panel>}
   </>
-}
-
-export function Activity({ items }: { items: AuditItem[] }) {
-  const { timezone } = useSession()
-  if (items.length === 0) return <Empty title="В журнале пока нет действий" />
-  return <ul className="activity-list">{items.map(item => <li key={item.id}><span className="activity-dot" /><div><strong>{activities[item.action] ?? item.action}</strong>
-    <small>{formatTime(item.time, timezone, true)}{item.by ? ` · Telegram ID ${item.by}` : ' · Система'}</small></div></li>)}</ul>
 }
 
 export function AttendancePage() { return <AttendanceView /> }
@@ -115,6 +97,7 @@ function AttendanceView({ history = false }: { history?: boolean }) {
   return <>
     <PageTitle title={history ? 'История посещаемости' : 'Посещаемость'} subtitle="Отметки по ученикам и классам">
       <ClassSelect items={classes} {...selected} />{(owner || current?.can_history) && <label className="inline-field"><span>Дата</span><input aria-label="Дата отметок" type="date" required value={day} max={me.today} onChange={event => setDay(event.target.value)} /></label>}
+      {owner && current && <Button asChild variant="outline"><Link to={`/reports?class=${current.id}&day=${weekday}`}><FileText size={17}/> Отчёт за этот день</Link></Button>}
     </PageTitle>
     {timetable.data && <Panel title="Уроки выбранного дня"><DayLessons plan={timetable.data.days[0]} subjects={timetable.data.subjects} compact/></Panel>}
     {!current ? <Panel><Empty title="Нет доступных классов" /></Panel> : query.isPending ? <Panel><Pending /></Panel> : query.error ? <Failure error={query.error} retry={() => query.refetch()} /> : <>
@@ -157,23 +140,28 @@ function AttendanceView({ history = false }: { history?: boolean }) {
 interface Stats { counts: number[]; timeline: { day: string; counts: number[] }[] }
 export function Statistics() {
   const me = useSession()
-  const classes = useData<SchoolClass[]>('/classes')
-  const selected = useClass(classes.data ?? me.managed)
-  const [range, setRange] = useState({ start: toDay(me.today, -6), end: me.today })
-  const [preset, setPreset] = useState('week')
+  const owner = me.roles.includes('OWNER')
+  const classes = useData<SchoolClass[]>(owner ? '/classes' : null)
+  const available = owner ? (classes.data ?? me.managed) : me.managed.filter(item => item.can_view_statistics)
+  const selected = useClass(available)
+  const [range, setRange] = useState({ start: toDay(me.today, -(me.statistics_days ?? 7) + 1), end: me.today })
+  const [preset, setPreset] = useState(me.statistics_days === 1 ? 'day' : me.statistics_days === 30 ? 'month' : 'week')
+  const [showComparison, setShowComparison] = useState(false)
   const valid = range.start && range.end && range.start <= range.end
   const params = `start=${range.start}&end=${range.end}`
   const data = useData<Stats>(selected.value && valid ? `/classes/${selected.value}/stats?${params}` : null)
+  const comparison = useData<{ class: SchoolClass; counts: number[] }[]>(owner && showComparison && valid ? `/admin/stats/comparison?${params}` : null)
   const action = useAction()
   const series = data.data?.timeline.map(item => ({ date: formatDay(item.day), rate: attendanceRate(item.counts) })) ?? []
   const rangeButtons = [['day', 'День'], ['week', 'Неделя'], ['month', 'Месяц']]
   function choose(type: string) {
     setPreset(type)
-    setRange({ start: type === 'day' ? me.today : type === 'week' ? toDay(me.today, -6) : me.today.slice(0, 8) + '01', end: me.today })
+    setRange({ start: toDay(me.today, type === 'day' ? 0 : type === 'week' ? -6 : -29), end: me.today })
   }
   return <>
-    <PageTitle title="Статистика" subtitle="Посещаемость по дням и классам"><ClassSelect items={classes.data ?? me.managed} {...selected} />
-      <Button variant="outline" disabled={!data.data || action.busy} onClick={() => action.run(() => download(`/classes/${selected.value}/export?${params}`, 'attendance.xlsx'), 'Отчёт Excel подготовлен')}><ArrowDownToLine size={17} /> Excel</Button>
+    <PageTitle title="Статистика" subtitle="Посещаемость по дням и классам"><ClassSelect items={available} {...selected} />
+      {owner && <><Button variant="outline" onClick={() => setShowComparison(!showComparison)} aria-pressed={showComparison}>Сравнить классы</Button>
+        <Button variant="outline" disabled={!data.data || action.busy} onClick={() => action.run(() => download(`/classes/${selected.value}/export?${params}`, 'attendance.xlsx'), 'Отчёт Excel подготовлен')}><ArrowDownToLine size={17} /> Excel</Button></>}
     </PageTitle>
     <div className="toolbar filter-bar"><div className="segmented">{rangeButtons.map(([key, label]) => <button key={key} aria-pressed={preset === key} onClick={() => choose(key)}>{label}</button>)}</div>
       <label className="inline-field"><span>С</span><input type="date" max={me.today} value={range.start} onChange={e => { setPreset(''); setRange({ ...range, start: e.target.value }) }} /></label>
@@ -189,5 +177,9 @@ export function Statistics() {
         </AreaChart></ResponsiveContainer></div>
       </Panel><Panel title="Итог за период"><Donut counts={data.data.counts} /></Panel></div>
     </>}
+    {showComparison && valid && <Panel title="Сравнение активных классов">{comparison.isPending ? <Pending/> : comparison.error ? <Failure error={comparison.error}/> :
+      <div className="table-wrap"><table><thead><tr><th>Класс</th><th>Присутствовали</th><th>Всего записей</th><th>Посещаемость</th></tr></thead><tbody>
+        {comparison.data.map(item => <tr key={item.class.id}><td>{item.class.name}</td><td>{item.counts[1]}</td><td>{sum(item.counts)}</td><td>{attendanceRate(item.counts)}%</td></tr>)}
+      </tbody></table></div>}</Panel>}
   </>
 }

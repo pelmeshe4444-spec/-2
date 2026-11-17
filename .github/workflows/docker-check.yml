@@ -80,6 +80,14 @@ jobs:
             --connect-timeout 2 --max-time 5 \
             http://127.0.0.1:14183/api/health | grep -F '{"status":"ok"}'
           curl --fail --silent --show-error http://127.0.0.1:14183/ | grep -F '<title>Attendance</title>'
+      - name: Verify administrative writes persist across a backend restart
+        run: |
+          python3 tests/docker_admin_smoke.py
+          docker restart attendance-ci
+          curl --fail --silent --show-error --retry 12 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 2 --max-time 5 \
+            http://127.0.0.1:14183/api/health | grep -F '{"status":"ok"}'
+          python3 tests/docker_admin_smoke.py --verify-only
       - name: Container logs on failure
         if: failure()
         run: docker logs attendance-ci || true

@@ -20,6 +20,10 @@ class DecisionInput(Input):
     class_id: int | None = Field(default=None, gt=0)
 
 
+class MembershipInput(Input):
+    class_id: int | None = Field(gt=0)
+
+
 class EnabledInput(Input):
     enabled: bool
 
@@ -94,6 +98,7 @@ def school_routes(api, core, Account, Owner, telegram_sender):
         return brief(row)
 
     @api.get('/api/join-requests')
+    @api.get('/api/admin/join-requests')
     async def requests(uid: Owner, pending: bool = False):
         return [{**brief(row, school), 'user': view.profile(user)} for row, school, user in
                 await core.memberships.listing(uid, pending)]
@@ -103,6 +108,21 @@ def school_routes(api, core, Account, Owner, telegram_sender):
         row = await core.memberships.decide(uid, request_id, body.decision, body.class_id)
         background.add_task(dispatch_notices)
         return brief(row)
+
+    @api.post('/api/admin/join-requests/{request_id}/approve')
+    async def approve(request_id: int, uid: Owner, background: BackgroundTasks, body: MembershipInput | None = None):
+        return await resolve_request(request_id, DecisionInput(decision='APPROVED', class_id=body.class_id if body else None),
+                                     uid, background)
+
+    @api.post('/api/admin/join-requests/{request_id}/reject')
+    async def reject(request_id: int, uid: Owner, background: BackgroundTasks):
+        return await resolve_request(request_id, DecisionInput(decision='REJECTED'), uid, background)
+
+    @api.put('/api/admin/users/{target}/membership')
+    async def membership(target: int, body: MembershipInput, uid: Owner, background: BackgroundTasks):
+        await core.memberships.set_membership(uid, target, body.class_id)
+        background.add_task(dispatch_notices)
+        return {'class_id': body.class_id}
 
     @api.put('/api/me/lesson-notifications')
     async def preferences(body: EnabledInput, uid: Account):

@@ -1,6 +1,6 @@
 import { Clock, Plus, Send, Trash2, UsersRound, X } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { api } from '../api'
 import { activities, deliveryLabels, formatDay, formatTime } from '../domain'
 import type { AuditItem, Delivery, Page, Person, Report, Schedule, SchoolClass, Team } from '../types'
@@ -12,12 +12,18 @@ export function ReportsPage() {
   const all = useData<SchoolClass[]>(owner ? '/classes' : null)
   const classes = owner ? (all.data ?? me.managed) : me.reports
   const selected = useClass(classes)
-  const [day, setDay] = useState('')
+  const [params] = useSearchParams()
+  const [day, setDay] = useState(() => owner && /^\d{4}-\d{2}-\d{2}$/.test(params.get('day') ?? '') ? params.get('day')! : '')
   const [tab, setTab] = useState<'report' | 'delivery'>('report')
+  const [send, setSend] = useState<string>()
+  const action = useAction()
+  const current = classes.find(item => item.id === selected.value)
+  const canBrowse = owner || current?.can_view_reports
   const query = useData<Report>(selected.value && tab === 'report' ? `/classes/${selected.value}/report?day=${day}` : null, 20000)
   return <>
-    <PageTitle title="Отчёты" subtitle={owner ? 'Сводки посещаемости и журнал отправок' : 'Отчёты, доставленные вам в Telegram'}><ClassSelect items={classes} value={selected.value} change={value => { selected.change(value); setDay('') }} />
-      {owner && <label className="inline-field"><span>Дата</span><input type="date" value={day || me.today} max={me.today} onChange={e => setDay(e.target.value)}/></label>}</PageTitle>
+    <PageTitle title="Отчёты" subtitle={canBrowse ? 'Сводки посещаемости' : 'Отчёты, доставленные вам в Telegram'}><ClassSelect items={classes} value={selected.value} change={value => { selected.change(value); setDay('') }} />
+      {canBrowse && <label className="inline-field"><span>Дата</span><input type="date" value={day || me.today} max={me.today} onChange={e => setDay(e.target.value)}/></label>}
+      {owner && <Button variant="outline" disabled={!current?.active || !query.data?.day || action.busy} onClick={() => setSend(crypto.randomUUID().replaceAll('-', ''))}><Send size={17}/> Отправить отчёт</Button>}</PageTitle>
     {owner && <div className="segmented"><button aria-pressed={tab === 'report'} onClick={() => setTab('report')}>Отчёт</button><button aria-pressed={tab === 'delivery'} onClick={() => setTab('delivery')}>История доставки</button></div>}
     {!selected.value ? <Panel><Empty title="Нет доступных классов"/></Panel> : tab === 'delivery' ? <DeliveryList classId={selected.value} key={selected.value}/> :
       query.isPending ? <Panel><Pending/></Panel> : query.error ? <Failure error={query.error} retry={() => query.refetch()}/> : <Panel title="Отчёт о посещаемости" subtitle={query.data.day ? formatDay(query.data.day, true) : undefined}
@@ -28,6 +34,13 @@ export function ReportsPage() {
           return <div key={n}>{line}</div>
         })}</div>)}</article> : <Empty title="Пока нет доставленных отчётов" description="После первой доставки отчёт появится в этом разделе."/>}
       </Panel>}
+    {send && <Confirm title="Отправить отчёт?" text={`Получатели класса ${current?.name} получат отчёт за ${formatDay(query.data?.day ?? me.today)}.`}
+      label="Отправить" busy={action.busy} onClose={() => setSend(undefined)} onConfirm={async () => {
+        const result = await action.run(() => api<{ sent: number; total: number }>(`/classes/${selected.value}/send`, 'POST', {
+          request_id: send, day: query.data?.day ?? me.today,
+        }), result => result.total ? `Отчёт доставлен: ${result.sent} из ${result.total}` : 'Нет доступных получателей')
+        if (result) setSend(undefined)
+      }}/>}
   </>
 }
 
@@ -126,7 +139,7 @@ function Recipients({ classId }: { classId: number }) {
 export function AuditPage() {
   const { timezone } = useSession()
   const [page, setPage] = useState(0)
-  const data = useData<Page<AuditItem>>(`/audit?page=${page}`, 20000)
+  const data = useData<Page<AuditItem>>(`/admin/audit-logs?page=${page}`, 30000)
   return <><PageTitle title="Журнал действий" subtitle="Изменения в школе, права доступа и отправка отчётов"/>
     <Panel>{data.isPending ? <Pending/> : data.error ? <Failure error={data.error}/> : data.data.items.length === 0 ? <Empty title="Нет записей"/> : <>
       <div className="table-wrap"><table><thead><tr><th>Дата и время</th><th>Действие</th><th>Кто</th><th>Подробности</th></tr></thead><tbody>{data.data.items.map(item => <tr key={item.id}>

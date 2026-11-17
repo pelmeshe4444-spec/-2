@@ -8,6 +8,7 @@ from sqlalchemy import and_, or_, select
 from database.models import Attendance, AttendanceChange, Enrollment, SchoolClass, Student, utc_now
 from services.directory import bounded, sort_student
 from services.permissions import Conflict, Forbidden, UserError, audit
+from services.school_settings import school_zone
 
 
 class Status(IntEnum):
@@ -84,18 +85,17 @@ class AttendanceService:
         self.db, self.permissions, self.zone = db, permissions, zone
 
     def today(self):
-        return datetime.now(self.zone).date()
+        return datetime.now(school_zone(self.zone)).date()
 
     def local(self, stamp):
-        return stamp.replace(tzinfo=UTC).astimezone(self.zone)
+        return stamp.replace(tzinfo=UTC).astimezone(school_zone(self.zone))
 
     async def scope(self, session, telegram_id, class_id, day, *, writing=False):
         today = self.today()
         if day > today:
             raise UserError('Дата ещё не наступила.')
-        if writing and day < today and not self.permissions.is_owner(telegram_id):
-            raise Forbidden()
         return await self.permissions.for_class(session, telegram_id, class_id, history=day < today,
+                                                correction=writing and day < today,
                                                 allow_archived=not writing and self.permissions.is_owner(telegram_id))
 
     async def daily(self, telegram_id, class_id, day):
@@ -200,12 +200,16 @@ class AttendanceService:
                         break
             return student, items
 
-    async def period(self, telegram_id, class_id, start, end, *, student_id=None, owner_only=False):
+    async def period(self, telegram_id, class_id, start, end, *, student_id=None, owner_only=False, statistics=False):
         days = period_days(start, end, self.today())
         async with self.db.read() as session:
             if owner_only:
                 await self.permissions.owner(session, telegram_id)
-            _, school_class = await self.scope(session, telegram_id, class_id, start)
+            if statistics:
+                _, school_class = await self.permissions.for_class(session, telegram_id, class_id, statistics=True,
+                                    allow_archived=self.permissions.is_owner(telegram_id))
+            else:
+                _, school_class = await self.scope(session, telegram_id, class_id, start)
             enrollment_query = (select(Enrollment, Student).join(Student, Student.id == Enrollment.student_id)
                                 .where(Enrollment.class_id == class_id, Enrollment.starts_on <= end,
                                        or_(Enrollment.ends_before.is_(None), Enrollment.ends_before > start)))
