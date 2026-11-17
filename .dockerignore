@@ -1,6 +1,9 @@
 .git
 .env
 .env.*
+**/.env
+**/.env.*
+**/.npmrc
 .venv
 data
 **/node_modules
@@ -9,3 +12,7 @@ data
 **/playwright-report
 **/test-results
 *.sqlite*
+**/*.sqlite*
+**/*.db
+**/*.pem
+**/*.key

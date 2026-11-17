@@ -8,7 +8,8 @@ RUN npm run build
 FROM python:3.13-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
-RUN groupadd -r attendance && useradd -r -g attendance attendance
+RUN groupadd -r attendance && useradd -r -g attendance attendance \
+    && install -d -o attendance -g attendance /app/data
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY config.py main.py web_main.py transfer_sqlite.py alembic.ini ./
