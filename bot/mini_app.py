@@ -4,6 +4,9 @@ from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, WebAppInfo
 
 
+LAUNCH_LABEL = 'Открыть Attendance'
+
+
 def launch_router(app, url):
     router = Router()
     router.message.filter(F.chat.type == ChatType.PRIVATE, F.from_user)
@@ -13,9 +16,9 @@ def launch_router(app, url):
         user = message.from_user
         await app.directory.register(user.id, user.username, user.full_name)
         if not url:
-            await message.answer(f'Приложение Attendance ещё подключается. Ваш Telegram ID: <code>{user.id}</code>.')
+            await message.answer(f'Приложение Attendance ещё подключается. Ваш Telegram ID: {user.id}.')
             return
-        launch = InlineKeyboardButton(text='Открыть приложение', web_app=WebAppInfo(url=url))
+        launch = InlineKeyboardButton(text=LAUNCH_LABEL, web_app=WebAppInfo(url=url))
         await message.answer('Откройте Attendance, чтобы работать с посещаемостью.',
                              reply_markup=InlineKeyboardMarkup(inline_keyboard=[[launch]]))
 
@@ -23,9 +26,13 @@ def launch_router(app, url):
     async def old_button(query):
         await query.answer('Откройте Attendance через /start.', show_alert=True)
 
+    @router.message(F.text.startswith('/'))
+    async def unknown_command(message):
+        await message.answer('Команда не найдена. Отправьте /start, чтобы открыть Attendance.')
+
     return router
 
 
 async def configure_menu(bot, url):
     if url:
-        await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text='Открыть приложение', web_app=WebAppInfo(url=url)))
+        await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text=LAUNCH_LABEL, web_app=WebAppInfo(url=url)))
