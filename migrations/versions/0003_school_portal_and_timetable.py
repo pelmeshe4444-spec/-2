@@ -176,7 +176,7 @@ def upgrade():
         batch_op.create_index(batch_op.f('ix_timetable_lessons_timetable_id'), ['timetable_id'], unique=False)
 
     with op.batch_alter_table('manager_assignments', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('can_edit_timetable', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+        batch_op.add_column(sa.Column('can_edit_timetable', sa.Boolean(), server_default=sa.false(), nullable=False))
 
     with op.batch_alter_table('report_deliveries', schema=None) as batch_op:
         batch_op.add_column(sa.Column('attempts', sa.Integer(), server_default='1', nullable=False))
