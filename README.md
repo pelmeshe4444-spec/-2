@@ -57,6 +57,12 @@ LOG_LEVEL=INFO
 
 ## Сервер с PostgreSQL и HTTPS
 
+### Существующий сервис Render с runtime Docker
+
+В **Settings → Build & Deploy** укажите связанный репозиторий и ветку `main`. Оставьте **Root Directory** пустым, укажите `./Dockerfile` и контекст `.`. Сборке нужны `frontend/`, `backend/`, `bot/`, `database/`, `services/` и `migrations/` из корня репозитория. Контейнер слушает `0.0.0.0` и читает `PORT` при запуске. Для проверки сервиса используйте `/api/health`. Значения `BOT_TOKEN`, `OWNER_ID`, `DATABASE_URL` и секреты webhook и планировщика задайте в **Environment** на Render. [Документация Render](https://render.com/docs/docker)
+
+### Самостоятельный сервер с Docker Compose
+
 1. Направьте DNS выделенного домена на сервер с Docker Compose. Откройте входящие `80/tcp` и `443/tcp` для Caddy.
 2. Создайте на сервере `.env`. Задайте `BOT_TOKEN`, `OWNER_ID`, `ATTENDANCE_DOMAIN` и случайный URL-безопасный `POSTGRES_PASSWORD`. Пароль можно получить через `python -c "import secrets; print(secrets.token_urlsafe(32))"`. `ATTENDANCE_DOMAIN` указывают без `https://` и косой черты. Compose формирует адрес сервиса и строку PostgreSQL из этих переменных.
 3. Если нужно перенести существующую SQLite, остановите старый бот, сделайте согласованную копию базы и выполните перенос перед запуском `bot` и `web`. Если перенос не требуется, запустите весь стек.
