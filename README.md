@@ -61,6 +61,10 @@ LOG_LEVEL=INFO
 
 В **Settings → Build & Deploy** укажите связанный репозиторий и ветку `main`. Оставьте **Root Directory** пустым, укажите `./Dockerfile` и контекст `.`. Сборке нужны `frontend/`, `backend/`, `bot/`, `database/`, `services/` и `migrations/` из корня репозитория. Контейнер слушает `0.0.0.0` и читает `PORT` при запуске. Для проверки сервиса используйте `/api/health`. Значения `BOT_TOKEN`, `OWNER_ID`, `DATABASE_URL` и секреты webhook и планировщика задайте в **Environment** на Render. [Документация Render](https://render.com/docs/docker)
 
+Для GitHub Pages выберите **GitHub Actions** в качестве источника публикации и укажите адрес Pages в `MINI_APP_URL` на Render. Workflow собирает Mini App для Pages после тестов Python, Vitest и Playwright и проверки Docker с PostgreSQL. В настройках Render выберите **After CI Checks Pass**.
+
+Для облачного расписания задайте секрет `SCHEDULER_SECRET` с одинаковым значением на Render и в GitHub Actions. Workflow вызывает защищённый планировщик дважды в час. Время фактической доставки зависит от запуска GitHub Actions и пробуждения бесплатного Render. История отправок сохраняется в базе.
+
 ### Самостоятельный сервер с Docker Compose
 
 1. Направьте DNS выделенного домена на сервер с Docker Compose. Откройте входящие `80/tcp` и `443/tcp` для Caddy.

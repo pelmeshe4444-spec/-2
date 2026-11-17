@@ -270,7 +270,8 @@ class Directory:
             actor, _ = await self.owner_class(session, telegram_id, class_id)
             if operation not in {'manager_add', 'manager_remove', 'recipient_add', 'recipient_remove', 'history_on', 'history_off'}:
                 raise UserError('Действие недоступно.')
-            if not 0 < target_id < 2**52 or self.permissions.is_owner(target_id):
+            recipient = operation.startswith('recipient_')
+            if not 0 < target_id < 2**52 or (self.permissions.is_owner(target_id) and not recipient):
                 raise UserError('Укажите корректный Telegram ID. Права владельца задаются в .env.')
             target = await session.scalar(select(User).where(User.telegram_id == target_id))
             if operation == 'recipient_add' and (target is None or target.started_at is None):
@@ -281,7 +282,6 @@ class Directory:
                 target = User(telegram_id=target_id)
                 session.add(target)
                 await session.flush()
-            recipient = operation.startswith('recipient_')
             model = ReportRecipient if recipient else ManagerAssignment
             role = 'REPORT_RECIPIENT' if recipient else 'MANAGER'
             assignment = await session.get(model, (target.id, class_id))

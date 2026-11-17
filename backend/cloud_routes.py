@@ -1,3 +1,4 @@
+import logging
 import secrets
 
 from aiogram import Dispatcher
@@ -6,6 +7,9 @@ from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from bot.mini_app import launch_router
+
+
+log = logging.getLogger(__name__)
 
 
 def check_secret(supplied, expected):
@@ -24,8 +28,12 @@ def cloud_routes(api, core, config, telegram_sender):
             update = Update.model_validate(await request.json())
         except (ValueError, ValidationError):
             raise HTTPException(400, 'Неверный формат обновления.') from None
-        async with telegram_sender() as bot:
-            await dispatcher.feed_update(bot, update)
+        try:
+            async with telegram_sender() as bot:
+                await dispatcher.feed_update(bot, update)
+        except Exception as exc:
+            log.error('Не удалось обработать обновление Telegram %s (%s)', update.update_id, type(exc).__name__)
+            raise HTTPException(503, 'Не удалось обработать обновление Telegram.') from None
         return {'ok': True}
 
     @api.post('/api/internal/scheduler/run')

@@ -331,7 +331,7 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     @api.post('/api/users/{target}/access')
     async def change_access(target: int, body: AccessInput, uid: Owner):
         user, changed = await core.directory.access(uid, target, body.class_id, body.operation)
-        if changed and body.operation.endswith('_add') and user.started_at and not user.blocked:
+        if changed and target != uid and body.operation.endswith('_add') and user.started_at and not user.blocked:
             try:
                 async with telegram_sender() as bot:
                     await bot.send_message(user.telegram_id, 'Вам предоставлен доступ к Attendance. Откройте приложение из меню бота.',
