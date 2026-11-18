@@ -1,6 +1,6 @@
 from datetime import UTC, date as CalendarDate, datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, JSON, String, UniqueConstraint, false
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, JSON, String, UniqueConstraint, false, true
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -44,17 +44,18 @@ class Student(Base):
     __tablename__ = 'students'
     __table_args__ = (UniqueConstraint('class_id', 'active_name_key', name='uq_student_active_name'),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    first_name: Mapped[str] = mapped_column(String(48))
-    last_name: Mapped[str] = mapped_column(String(48))
+    full_name: Mapped[str] = mapped_column(String(255), server_default='')
+    _legacy_first: Mapped[str] = mapped_column('first_name', String(48), default='')
+    _legacy_last: Mapped[str] = mapped_column('last_name', String(48), default='')
     class_id: Mapped[int] = mapped_column(ForeignKey('classes.id'), index=True)
-    active_name_key: Mapped[str | None] = mapped_column(String(200))
+    active_name_key: Mapped[str | None] = mapped_column(String(765))
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
 
     @property
     def name(self) -> str:
-        return f'{self.last_name} {self.first_name}'
+        return self.full_name or f'{self._legacy_last} {self._legacy_first}'.strip()
 
 
 class Enrollment(Base):
@@ -75,6 +76,7 @@ class ManagerAssignment(Base):
     can_edit_history: Mapped[bool] = mapped_column(default=False, server_default=false())
     can_view_statistics: Mapped[bool] = mapped_column(default=False, server_default=false())
     can_view_reports: Mapped[bool] = mapped_column(default=False, server_default=false())
+    can_send_reports: Mapped[bool] = mapped_column(default=True, server_default=true())
 
 
 class ReportRecipient(Base):
@@ -121,6 +123,8 @@ class ReportDelivery(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     schedule_id: Mapped[int] = mapped_column(ForeignKey('report_schedules.id'))
     recipient_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    initiated_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
     report_date: Mapped[CalendarDate]
     dispatch_key: Mapped[str] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(16), default='sending')

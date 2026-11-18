@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, download } from '../api'
+import { SendReportNow } from '../components/SendReportNow'
 import { attendanceRate, colors, formatDay, formatTime, initials, statuses, statusOrder, sum, toDay } from '../domain'
 import type { Attendance, Entry, SchoolClass } from '../types'
 import { DayLessons, type Timetable } from './timetable'
@@ -49,6 +50,7 @@ export function ManagerDashboard() {
         <div className="hero-progress" role="progressbar" aria-label="Ученики с отметкой" aria-valuenow={total ? Math.round(marked / total * 100) : 0}><span style={{ width: `${total ? marked / total * 100 : 0}%` }} /></div>
       </div><Button className="hero-button" asChild><Link to={`/attendance?class=${current.id}`}><ClipboardCheck size={19} />Начать отметку<ArrowRight size={18} /></Link></Button></section>
       {daily.isPending ? <Panel><Pending /></Panel> : daily.error ? <Failure error={daily.error} retry={() => daily.refetch()} /> : <Counts counts={counts} />}
+      {current.can_send_reports && <Panel><div className="panel-form"><SendReportNow key={current.id} classId={current.id}/></div></Panel>}
       <div className="dashboard-grid single">
         <Panel title="Распределение отметок" subtitle="Сегодня, выбранный класс"><Donut counts={counts} /></Panel>
       </div>
@@ -98,6 +100,7 @@ function AttendanceView({ history = false }: { history?: boolean }) {
     <PageTitle title={history ? 'История посещаемости' : 'Посещаемость'} subtitle="Отметки по ученикам и классам">
       <ClassSelect items={classes} {...selected} />{(owner || current?.can_history) && <label className="inline-field"><span>Дата</span><input aria-label="Дата отметок" type="date" required value={day} max={me.today} onChange={event => setDay(event.target.value)} /></label>}
       {owner && current && <Button asChild variant="outline"><Link to={`/reports?class=${current.id}&day=${weekday}`}><FileText size={17}/> Отчёт за этот день</Link></Button>}
+      {!owner && current?.can_send_reports && <SendReportNow key={current.id} classId={current.id}/>}
     </PageTitle>
     {timetable.data && <Panel title="Уроки выбранного дня"><DayLessons plan={timetable.data.days[0]} subjects={timetable.data.subjects} compact/></Panel>}
     {!current ? <Panel><Empty title="Нет доступных классов" /></Panel> : query.isPending ? <Panel><Pending /></Panel> : query.error ? <Failure error={query.error} retry={() => query.refetch()} /> : <>

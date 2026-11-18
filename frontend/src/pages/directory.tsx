@@ -8,6 +8,8 @@ import { Button, ClassSelect, Confirm, Empty, Failure, Modal, PageTitle, Paginat
   useAction, useClass, useData, useSession } from '../ui'
 
 interface NamesResult { added: string[]; duplicates: string[] }
+const fullNamePlaceholder = 'Введите полное ФИО (любое количество слов)'
+const cleanName = (value: string) => value.trim().replace(/\s+/g, ' ')
 type StudentDialog = { kind: 'add' | 'bulk' } | { kind: 'edit' | 'history' | 'archive' | 'restore'; student: Student }
 
 export function StudentsPage() {
@@ -27,7 +29,7 @@ export function StudentsPage() {
   const pageSize = 12
   const items = (list.data ?? []).filter(item => (filter === 'all' || item.active === (filter === 'active'))
     && (status === 'all' || item.status === Number(status))
-    && item.name.toLocaleLowerCase('ru').includes(search.trim().toLocaleLowerCase('ru')))
+    && item.name.toLocaleLowerCase('ru').includes(cleanName(search).toLocaleLowerCase('ru')))
     .sort((a, b) => sort === 'recent' ? (b.marked_at ?? b.updated_at).localeCompare(a.marked_at ?? a.updated_at) : a.name.localeCompare(b.name, 'ru'))
   const visiblePage = Math.min(page, Math.max(0, Math.ceil(items.length / pageSize) - 1))
   return <>
@@ -42,7 +44,7 @@ export function StudentsPage() {
       <select aria-label="Сортировка учеников" value={sort} onChange={e => setSort(e.target.value)}><option value="name">По имени</option><option value="recent">По изменению</option></select></div>
       {!current ? <Empty title="Сначала добавьте класс" /> : list.isPending ? <Pending /> : list.error ? <Failure error={list.error} retry={() => list.refetch()} /> : !items.length ? <Empty title="Ученики не найдены" /> : <>
         <div className="table-wrap"><table><thead><tr><th>Ученик</th><th>Класс</th><th>Статус сегодня</th><th>Изменено</th><th>Действия</th></tr></thead><tbody>
-          {items.slice(visiblePage * pageSize, (visiblePage + 1) * pageSize).map(item => <tr key={item.id}><td><button className="text-button student-link" onClick={() => setDialog({ kind: 'history', student: item })}><span aria-hidden="true" className="avatar avatar-soft">{initials(item.name)}</span>{item.name}</button></td><td>{current.name}</td><td>{item.active ? <StatusBadge status={item.status} /> : <span className="badge badge-slate">В архиве</span>}</td><td>{formatTime(item.marked_at ?? item.updated_at, me.timezone, true)}</td>
+          {items.slice(visiblePage * pageSize, (visiblePage + 1) * pageSize).map(item => <tr key={item.id}><td><button className="text-button student-link" onClick={() => setDialog({ kind: 'history', student: item })}><span aria-hidden="true" className="avatar avatar-soft">{initials(item.name)}</span><span>{item.name}</span></button></td><td>{current.name}</td><td>{item.active ? <StatusBadge status={item.status} /> : <span className="badge badge-slate">В архиве</span>}</td><td>{formatTime(item.marked_at ?? item.updated_at, me.timezone, true)}</td>
             <td><div className="table-actions">{current.active && (item.active ? <>
               <Button size="icon" variant="ghost" aria-label={`Редактировать · ${item.name}`} onClick={() => setDialog({ kind: 'edit', student: item })}><Pencil size={16}/></Button>
               <Button size="icon" variant="ghost" aria-label={`Архивировать · ${item.name}`} onClick={() => setDialog({ kind: 'archive', student: item })}><Archive size={17}/></Button></> :
@@ -67,20 +69,22 @@ function AddStudent({ classId, bulk, close }: { classId: number; bulk: boolean; 
   const [preview, setPreview] = useState<NamesResult>()
   const action = useAction()
   const path = `/classes/${classId}/students`
-  return <Modal open onOpenChange={open => !open && close()} title={bulk ? 'Массовое добавление' : 'Новый ученик'} description={bulk ? 'До 100 строк. Укажите фамилию и имя в каждой строке.' : 'Укажите фамилию и имя через пробел.'}>
+  const tooLong = !bulk && [...cleanName(names)].length > 255
+  return <Modal open onOpenChange={open => !open && close()} title={bulk ? 'Массовое добавление' : 'Новый ученик'} description={bulk ? 'До 100 строк. Одна строка — один ученик.' : 'До 255 символов.'}>
     <form onSubmit={async e => {
       e.preventDefault()
       if (bulk && !preview) {
         setPreview(await action.run(() => api<NamesResult>(path, 'POST', { names, bulk, preview: true })))
         return
       }
-      const result = await action.run(() => api<NamesResult>(path, 'POST', { names, bulk }), value => `Добавлено: ${value.added.length}. Дубликатов: ${value.duplicates.length}.`)
+      const result = await action.run(() => api<NamesResult>(path, 'POST', bulk ? { names, bulk } : { full_name: cleanName(names) }), value => `Добавлено: ${value.added.length}. Дубликатов: ${value.duplicates.length}.`)
       if (result) close()
     }}>
-      {!preview ? <label className="field">{bulk ? 'Список учеников' : 'Фамилия и имя'}{bulk ? <textarea required maxLength={10000} rows={8} value={names} onChange={e => setNames(e.target.value)}/> : <input required maxLength={97} value={names} onChange={e => setNames(e.target.value)}/>}</label> :
+      {!preview ? <label className="field">{bulk ? 'Список учеников' : 'Полное имя ученика'}{bulk ? <textarea required rows={8} value={names} onChange={e => setNames(e.target.value)}/> : <input required placeholder={fullNamePlaceholder} value={names} onChange={e => setNames(e.target.value)}/>}</label> :
         <div className="preview-list"><strong>Будут добавлены · {preview.added.length}</strong><ol>{preview.added.map(name => <li key={name}>{name}</li>)}</ol>{preview.duplicates.length > 0 && <><strong>Дубликаты · {preview.duplicates.length}</strong><ul>{preview.duplicates.map((name, index) => <li key={`${name}-${index}`}>{name}</li>)}</ul></>}</div>}
       <div className="dialog-actions"><Button type="button" variant="outline" onClick={() => preview ? setPreview(undefined) : close()}>{preview ? 'Исправить список' : 'Отмена'}</Button>
-        <Button disabled={action.busy || Boolean(preview && preview.added.length === 0)}>{bulk && !preview ? 'Предпросмотр' : 'Добавить'}</Button></div>
+        {tooLong && <small role="alert">Полное имя должно содержать до 255 символов.</small>}
+        <Button disabled={action.busy || tooLong || !names.trim() || Boolean(preview && preview.added.length === 0)}>{bulk && !preview ? 'Предпросмотр' : 'Добавить'}</Button></div>
     </form>
   </Modal>
 }
@@ -89,11 +93,13 @@ function EditStudent({ student, classes, close }: { student: Student; classes: S
   const [name, setName] = useState(student.name)
   const [classId, setClassId] = useState(student.class_id)
   const action = useAction()
+  const tooLong = [...cleanName(name)].length > 255
   return <Modal open onOpenChange={open => !open && close()} title="Данные ученика" description="Перевод в другой класс вступает в силу завтра.">
-    <form onSubmit={async e => { e.preventDefault(); if (await action.run(() => api(`/students/${student.id}`, 'PATCH', { name, class_id: classId }), 'Карточка сохранена')) close() }}>
-      <label className="field">Фамилия и имя<input required maxLength={97} value={name} onChange={e => setName(e.target.value)}/></label>
+    <form onSubmit={async e => { e.preventDefault(); if (await action.run(() => api(`/students/${student.id}`, 'PATCH', { full_name: cleanName(name), class_id: classId }), 'Карточка сохранена')) close() }}>
+      <label className="field">Полное имя ученика<input required placeholder={fullNamePlaceholder} value={name} onChange={e => setName(e.target.value)}/></label>
       <label className="field">Класс<select value={classId} onChange={e => setClassId(Number(e.target.value))}>{classes.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-      <div className="dialog-actions"><Button type="button" variant="outline" onClick={close}>Отмена</Button><Button disabled={action.busy}>Сохранить</Button></div>
+      {tooLong && <small role="alert">Полное имя должно содержать до 255 символов.</small>}
+      <div className="dialog-actions"><Button type="button" variant="outline" onClick={close}>Отмена</Button><Button disabled={action.busy || tooLong || !name.trim()}>Сохранить</Button></div>
     </form>
   </Modal>
 }
@@ -219,6 +225,7 @@ function AccessDialog({ target, classes, initialClass, close }: { target: number
           { label: 'Исправление прошлых отметок', key: 'correction', granted: manager.can_edit_history },
           { label: 'Просмотр статистики', key: 'statistics', granted: manager.can_view_statistics },
           { label: 'Просмотр отчётов класса', key: 'report_view', granted: manager.can_view_reports },
+          { label: 'Ручная отправка отчётов', key: 'report_send', granted: manager.can_send_reports },
           { label: 'Редактирование уроков', key: 'timetable', granted: manager.can_edit_timetable },
         ].map(item => <div key={item.key}><span>{item.label}</span><Button size="small" variant="outline" disabled={action.busy}
           aria-label={`${item.granted ? 'Запретить' : 'Разрешить'} · ${item.label}`} onClick={() => change(`${item.key}_${item.granted ? 'off' : 'on'}`)}>{item.granted ? 'Запретить' : 'Разрешить'}</Button></div>)}

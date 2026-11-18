@@ -13,15 +13,16 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.orm import aliased
 
 from database.models import ManagerAssignment, ReportDelivery, ReportRecipient, ReportSchedule, SchoolClass, User, utc_now
 from services.attendance import ICONS, LABELS, REPORT_LABELS, Status, counts, roster
-from services.permissions import UserError, audit
+from services.permissions import Forbidden, UserError, audit
 
 
 log = logging.getLogger(__name__)
 WEEKDAYS = ('Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс')
-DELIVERY_STATUS = {'sending': 'отправляется', 'sent': 'доставлено', 'failed': 'ошибка',
+DELIVERY_STATUS = {'sending': 'отправляется', 'sent': 'принято Telegram', 'failed': 'ошибка', 'retry': 'повтор запланирован',
                    'uncertain': 'доставка не подтверждена', 'cancelled': 'отменено'}
 
 
@@ -50,14 +51,37 @@ def detailed_report(class_name, day, entries, now):
     chunks, current = [], header
     for status, label in REPORT_LABELS.items():
         group = [entry for entry in entries if entry.status == status]
-        title = f'{ICONS[status]} <b>{label} ({len(group)})</b>'
-        current, chunks = add_section(current, chunks, header, title, [
-            f'{i}. {escape(entry.student.name)}' + (f' — {escape(entry.reason)}' if entry.reason else '')
-            for i, entry in enumerate(group, 1)
-        ])
+        if status is Status.PRESENT:
+            title, lines = f'{ICONS[status]} <b>{label.upper()}: {len(group)}</b>', []
+        else:
+            title = f'{ICONS[status]} <b>{label.upper()} ({len(group)}):</b>'
+            lines = [f'{i}. {escape(entry.student.name)}' for i, entry in enumerate(group, 1)] or ['Нет']
+        current, chunks = add_section(current, chunks, header, title, lines)
     footer = f'━━━━━━━━━━━━\n{totals(counts(entries))}\n🕒 Отчёт сформирован: {now:%H:%M}'
     current, chunks = add_section(current, chunks, header, '', [footer])
     return chunks + [current]
+
+
+def safe_report_parts(parts):
+    """Redact older saved reports without changing their part indices."""
+    headings = {f'{ICONS[status]} <b>{label} (': status for status, label in REPORT_LABELS.items()}
+    result = []
+    for part in parts:
+        status = None
+        lines = []
+        for line in part.splitlines():
+            heading = next((value for prefix, value in headings.items() if line.startswith(prefix)), None)
+            if heading is not None:
+                status = heading
+                if status is Status.PRESENT:
+                    line = re.sub(r' \((\d+)\)</b>$', r': \1</b>', line)
+            if status is not None and re.match(r'^\d+\. ', line):
+                if status is Status.PRESENT:
+                    continue
+                line = line.partition(' — ')[0]
+            lines.append(line)
+        result.append('\n'.join(lines))
+    return result
 
 
 def add_section(current, chunks, header, title, lines):
@@ -80,18 +104,22 @@ def excel_report(class_name, by_day):
     workbook = Workbook()
     details = workbook.active
     details.title = 'Посещаемость'
-    details.append(['Дата', 'Класс', 'Ученик', 'Статус', 'Комментарий'])
+    details.append(['Дата', 'Класс', 'Ученик', 'Статус', 'Количество'])
     summary = workbook.create_sheet('Сводка')
     summary.append(['Дата', 'Всего', *REPORT_LABELS.values()])
     for day, entries in by_day.items():
         day_counts = counts(entries)
         summary.append([day, len(entries), *(day_counts[status] for status in REPORT_LABELS)])
+        details.append([day, class_name, None, LABELS[Status.PRESENT], day_counts[Status.PRESENT]])
+        details.cell(details.max_row, 2).data_type = 's'
         for entry in entries:
-            details.append([day, class_name, entry.student.name, LABELS[entry.status], entry.reason])
+            if entry.status is Status.PRESENT:
+                continue
+            details.append([day, class_name, entry.student.name, LABELS[entry.status], 1])
             for cell in details[details.max_row][1:]:
-                if cell.value is not None:
+                if isinstance(cell.value, str):
                     cell.data_type = 's'
-    for sheet, widths in ((details, (15, 22, 35, 33, 65)), (summary, (15, 12, 20, 14, 32, 32, 18))):
+    for sheet, widths in ((details, (15, 22, 65, 33, 17)), (summary, (15, 12, 20, 14, 32, 32, 18))):
         sheet.freeze_panes = 'A2'
         sheet.auto_filter.ref = sheet.dimensions
         for cell, width in zip(sheet[1], widths):
@@ -165,7 +193,10 @@ class Reports:
         async with self.db.read() as session:
             await self.permissions.owner(session, telegram_id)
             await self.permissions.for_class(session, telegram_id, class_id, allow_archived=True)
-            query = (select(ReportDelivery, User.telegram_id).join(User, User.id == ReportDelivery.recipient_id)
+            initiator = aliased(User)
+            query = (select(ReportDelivery, User.telegram_id, initiator.telegram_id, initiator.full_name)
+                     .join(User, User.id == ReportDelivery.recipient_id)
+                     .outerjoin(initiator, initiator.id == ReportDelivery.initiated_by)
                      .join(ReportSchedule, ReportSchedule.id == ReportDelivery.schedule_id)
                      .where(ReportSchedule.class_id == class_id))
             count = await session.scalar(select(func.count()).select_from(query.subquery()))
@@ -173,13 +204,37 @@ class Reports:
             rows = await session.execute(query.order_by(ReportDelivery.id.desc()).offset(page * size).limit(size))
             return list(rows), page, count
 
-    async def manual_result(self, actor_id, class_id, schedule_id, day, key):
+    async def manual_actor(self, session, uid, class_id):
+        actor, _ = await self.permissions.for_class(session, uid, class_id)
+        if not self.permissions.is_owner(uid):
+            assignment = await session.get(ManagerAssignment, (actor.id, class_id))
+            if not assignment.can_send_reports:
+                raise Forbidden()
+        return actor
+
+    async def manual_status(self, uid, class_id):
         async with self.db.read() as session:
-            await self.permissions.owner(session, actor_id)
-            await self.permissions.for_class(session, actor_id, class_id, allow_archived=True)
+            await self.manual_actor(session, uid, class_id)
+            return await session.scalar(select(func.max(ReportDelivery.sent_at)).join(ReportSchedule).where(
+                ReportSchedule.class_id == class_id, ReportDelivery.dispatch_key.startswith('manual_'),
+                ReportDelivery.status == 'sent'))
+
+    async def send_now(self, bot, uid, class_id, key, day=None):
+        today = self.attendance.today()
+        day = day or today
+        async with self.db.read() as session:
+            await self.manual_actor(session, uid, class_id)
+            if day > today:
+                raise UserError('Нельзя отправить отчёт за будущую дату.')
+            schedule_id = await session.scalar(select(ReportSchedule.id).where(ReportSchedule.class_id == class_id))
+        if schedule_id is None:
+            raise UserError('У класса отсутствуют настройки отчётов.')
+        await self.dispatch(bot, schedule_id, day, key, manual_actor=uid)
+        async with self.db.read() as session:
             states = list(await session.scalars(select(ReportDelivery.status).where(
-                ReportDelivery.schedule_id == schedule_id, ReportDelivery.report_date == day, ReportDelivery.dispatch_key == key)))
-            return {'sent': states.count('sent'), 'total': len(states)}
+                ReportDelivery.schedule_id == schedule_id, ReportDelivery.dispatch_key == key)))
+            return {'sent': states.count('sent'), 'total': len(states),
+                    'pending': states.count('sending') + states.count('retry')}
 
     async def latest(self, telegram_id, class_id):
         reports = await self.available(telegram_id, class_id, limit=1)
@@ -196,19 +251,25 @@ class Reports:
                 .order_by(ReportDelivery.report_date.desc(), ReportDelivery.id.desc()).limit(limit))
             if day:
                 query = query.where(ReportDelivery.report_date == day)
-            return [(report_date, json.loads(body)) for report_date, body in await session.execute(query)]
+            return [(report_date, safe_report_parts(json.loads(body))) for report_date, body in await session.execute(query)]
 
     async def dispatch(self, bot, schedule_id, day, key, *, manual_actor=None, now=None):
         reminder = key.startswith('reminder_')
         model = ManagerAssignment if reminder else ReportRecipient
         now = now or datetime.now(UTC)
-        async with self.db.read() as session:
-            if manual_actor is not None:
-                await self.permissions.owner(session, manual_actor)
+        async with self.db.write() as session:
             schedule = await session.get(ReportSchedule, schedule_id)
             if schedule is None:
                 return {}
             school_class = await session.get(SchoolClass, schedule.class_id)
+            actor = None
+            if manual_actor is not None:
+                actor = await self.manual_actor(session, manual_actor, school_class.id)
+                if not self.permissions.is_owner(manual_actor) and day != self.attendance.today():
+                    raise Forbidden()
+                if await session.scalar(select(ReportDelivery.id).where(
+                    ReportDelivery.schedule_id == schedule_id, ReportDelivery.dispatch_key == key).limit(1)):
+                    return {}
             local_now = now.astimezone(ZoneInfo(schedule.timezone))
             if not school_class.is_active or (manual_actor is None and not self.due_on(schedule, key, day, local_now)):
                 return {}
@@ -222,60 +283,53 @@ class Reports:
             if not users:
                 return {}
             entries = await roster(session, school_class.id, day)
-        if reminder:
-            unmarked = counts(entries)[Status.UNMARKED]
-            if not unmarked:
-                return {}
-            report_time = datetime.combine(day, datetime.strptime(schedule.time, '%H:%M').time(), local_now.tzinfo)
-            remaining = max(1, int((report_time - local_now).total_seconds() + 59) // 60)
-            parts = [f'🔔 <b>Напоминание</b>\n🏷 Класс: {escape(school_class.name)}\n'
-                     f'До отправки отчёта: {remaining} мин.\nНе отмечено учеников: {unmarked}']
-        else:
-            parts = detailed_report(school_class.name, day, entries, local_now)
+            if reminder:
+                unmarked = counts(entries)[Status.UNMARKED]
+                if not unmarked:
+                    return {}
+                report_time = datetime.combine(day, datetime.strptime(schedule.time, '%H:%M').time(), local_now.tzinfo)
+                remaining = max(1, int((report_time - local_now).total_seconds() + 59) // 60)
+                parts = [f'🔔 <b>Напоминание</b>\n🏷 Класс: {escape(school_class.name)}\n'
+                         f'До отправки отчёта: {remaining} мин.\nНе отмечено учеников: {unmarked}']
+            else:
+                parts = detailed_report(school_class.name, day, entries, local_now)
+            claims = [ReportDelivery(schedule_id=schedule_id, recipient_id=target.id, report_date=day,
+                                     dispatch_key=key, parts_total=len(parts), initiated_by=actor.id if actor else None)
+                      for target in users]
+            session.add_all(claims)
+            await session.flush()
+            for delivery in claims:
+                audit(session, actor, 'delivery.claimed', 'delivery', delivery.id, f'class={school_class.id} key={key}')
         result = {}
-        for target in users:
-            delivery_id = await self._claim(schedule_id, day, key, target, len(parts), model, school_class.id, manual_actor, now)
-            if delivery_id is not None:
-                result[target.telegram_id] = await self._send(bot, parts, delivery_id, target, school_class.id, model)
+        for delivery, target in zip(claims, users):
+            result[target.telegram_id] = await self._send(bot, parts, delivery.id, target, school_class.id, model,
+                                                          initiator=manual_actor)
         return result
 
-    async def _claim(self, schedule_id, day, key, target, parts_total, model, class_id, manual_actor, now):
-        async with self.db.write() as session:
-            actor = await self.permissions.owner(session, manual_actor) if manual_actor is not None else None
-            if not (await session.get(SchoolClass, class_id)).is_active:
-                return None
-            if manual_actor is None:
-                schedule = await session.get(ReportSchedule, schedule_id)
-                local_now = now.astimezone(ZoneInfo(schedule.timezone))
-                if not self.due_on(schedule, key, day, local_now):
-                    return None
-            if (await session.get(User, target.id)).blocked or await session.get(model, (target.id, class_id)) is None:
-                return None
-            existing = await session.scalar(select(ReportDelivery.id).where(
-                ReportDelivery.schedule_id == schedule_id, ReportDelivery.report_date == day,
-                ReportDelivery.dispatch_key == key, ReportDelivery.recipient_id == target.id))
-            if existing is not None:
-                return None
-            delivery = ReportDelivery(schedule_id=schedule_id, recipient_id=target.id, report_date=day,
-                                      dispatch_key=key, parts_total=parts_total)
-            session.add(delivery)
-            await session.flush()
-            audit(session, actor, 'delivery.claimed', 'delivery', delivery.id, f'class={class_id} key={key}')
-            return delivery.id
-
-    async def _send(self, bot, parts, delivery_id, target, class_id, model, sent=0):
+    async def _send(self, bot, parts, delivery_id, target, class_id, model, sent=0, initiator=None):
         status, error, retry_delay = 'sent', None, 0
         for part in parts[sent:]:
+            message_id = None
             for attempt in range(3):
                 async with self.db.read() as session:
                     assigned = await session.get(model, (target.id, class_id))
                     blocked = (await session.get(User, target.id)).blocked
                     active_class = (await session.get(SchoolClass, class_id)).is_active
+                    if initiator is not None and active_class:
+                        try:
+                            await self.manual_actor(session, initiator, class_id)
+                        except Forbidden:
+                            status, error = 'cancelled', 'Право на ручную отправку отозвано.'
+                            break
                 if assigned is None or blocked or not active_class:
                     status, error = 'cancelled', 'Права получателя отозваны.'
                     break
                 try:
-                    await bot.send_message(target.telegram_id, part, parse_mode='HTML', protect_content=True)
+                    message = await bot.send_message(target.telegram_id, part, parse_mode='HTML', protect_content=True)
+                    message_id = getattr(message, 'message_id', None)
+                    if not isinstance(message_id, int) or message_id <= 0:
+                        status, error = 'uncertain', 'Telegram не вернул идентификатор сообщения.'
+                        break
                     sent += 1
                     break
                 except TelegramForbiddenError:
@@ -303,6 +357,8 @@ class Reports:
             async with self.db.write() as session:
                 delivery = await session.get(ReportDelivery, delivery_id)
                 delivery.parts_sent = sent
+                if status == 'sent':
+                    delivery.telegram_message_id = message_id
             if status != 'sent':
                 break
         async with self.db.write() as session:
@@ -357,10 +413,12 @@ class Reports:
                     delivery.status, delivery.error_message, delivery.body = 'cancelled', 'Срок отправки истёк или доступ отозван.', None
                     audit(session, None, 'delivery.cancelled', 'delivery', delivery_id)
                     continue
-                parts = json.loads(delivery.body)
+                parts = safe_report_parts(json.loads(delivery.body))
+                initiator = await session.get(User, delivery.initiated_by) if delivery.initiated_by else None
                 delivery.status, delivery.attempts = 'sending', delivery.attempts + 1
                 delivery.retry_at = now
-            await self._send(bot, parts, delivery_id, target, schedule.class_id, model, delivery.parts_sent)
+            await self._send(bot, parts, delivery_id, target, schedule.class_id, model, delivery.parts_sent,
+                             initiator.telegram_id if initiator else None)
 
     @staticmethod
     def is_due(schedule, key, now):

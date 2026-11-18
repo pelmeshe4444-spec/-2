@@ -2,6 +2,7 @@ import asyncio
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import uvicorn
@@ -20,7 +21,7 @@ OWNER, MANAGER, RECIPIENT = 101, 102, 103
 
 class LocalSender:
     async def send_message(self, *_args, **_kwargs):
-        return None
+        return SimpleNamespace(message_id=1)
 
 
 async def fixtures(config, db):
@@ -32,7 +33,7 @@ async def fixtures(config, db):
     await app.directory.add_class(OWNER, '9-А')
     await app.directory.access(OWNER, MANAGER, a.id, 'manager_add')
     await app.directory.access(OWNER, RECIPIENT, a.id, 'recipient_add')
-    await app.directory.add_students(OWNER, a.id, [('Авдеев', 'Александр'), ('Белова', 'Инна'), ('Власов', 'Игорь'), ('Громова', 'Елена')])
+    await app.directory.add_students(OWNER, a.id, ['Авдеев Александр', 'Белова Инна', 'Власов Игорь', 'Громова Елена'])
     _, students = await app.directory.students(OWNER, a.id)
     for student, status in zip(students, [Status.PRESENT, Status.PRESENT, Status.SICK, Status.UNMARKED]):
         await app.attendance.mark(OWNER, a.id, app.attendance.today(), student.id, status)

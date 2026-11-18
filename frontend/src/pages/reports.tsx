@@ -30,7 +30,7 @@ export function ReportsPage() {
         actions={!owner && query.data.dates.length > 0 ? <label className="inline-field"><span>Дата</span><select value={day || query.data.day || ''} onChange={e => setDay(e.target.value)}>{query.data.dates.map(date => <option key={date} value={date}>{formatDay(date, true)}</option>)}</select></label> : undefined}>
         {query.data.parts.length ? <article className="report-sheet">{query.data.parts.map((part, index) => <div className="report-part" key={index}>{part.split('\n').map((line, n) => {
           if (!line) return <br key={n}/>
-          if (/^(✅|🤒|📝|❌|⏳).*\([0-9]+\)|^📊/.test(line)) return <h3 key={n}>{line}</h3>
+          if (/^(✅|🤒|📝|❌|⏳).*\([0-9]+\)|^✅ ПРИСУТСТВУЮТ:|^📊/.test(line)) return <h3 key={n}>{line}</h3>
           return <div key={n}>{line}</div>
         })}</div>)}</article> : <Empty title="Пока нет доставленных отчётов" description="После первой доставки отчёт появится в этом разделе."/>}
       </Panel>}
@@ -49,8 +49,9 @@ function DeliveryList({ classId }: { classId: number }) {
   const [page, setPage] = useState(0)
   const data = useData<Page<Delivery>>(`/classes/${classId}/deliveries?page=${page}`, 12000)
   return <Panel title="История доставки">{data.isPending ? <Pending/> : data.error ? <Failure error={data.error}/> : data.data.items.length === 0 ? <Empty title="Отправок пока нет"/> : <>
-    <div className="table-wrap"><table><thead><tr><th>Дата</th><th>Получатель</th><th>Тип</th><th>Результат</th><th>Части</th></tr></thead><tbody>{data.data.items.map(item => <tr key={item.id}>
-      <td>{formatDay(item.day)}<small className="block muted">{formatTime(item.time, timezone)}</small></td><td>{item.telegram_id}</td><td>{deliveryLabels[item.kind] ?? item.kind}</td>
+    <div className="table-wrap"><table><thead><tr><th>Дата и время</th><th>Получатель</th><th>Отправитель</th><th>Тип</th><th>Результат</th><th>Части</th></tr></thead><tbody>{data.data.items.map(item => <tr key={item.id}>
+      <td>{formatDay(item.day)}<small className="block muted">{new Intl.DateTimeFormat('ru', { timeZone: timezone, dateStyle: 'short', timeStyle: 'medium' }).format(new Date(item.time))}</small></td><td>{item.telegram_id}</td>
+      <td>{item.initiated_by_name || item.initiated_by || (item.kind === 'manual' ? 'Нет данных' : 'Планировщик')}</td><td>{deliveryLabels[item.kind] ?? item.kind}</td>
       <td><span className={`badge ${item.status === 'sent' ? 'badge-green' : item.error ? 'badge-rose' : 'badge-slate'}`}>{deliveryLabels[item.status] ?? item.status}</span>
         {item.error && <small className="block muted">{item.error}</small>}</td><td>{item.parts_sent}/{item.parts_total}</td></tr>)}</tbody></table></div>
     <Pagination page={data.data.page} count={data.data.total} size={20} change={setPage}/>

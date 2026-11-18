@@ -216,6 +216,9 @@ td small { margin-top: 3px; }
 .text-button { text-align: left; color: var(--ink); border-radius: 6px; }
 .text-button:hover { color: #16947b; }
 .student-link { display: flex; gap: 8px; align-items: center; font-weight: 650; min-width: 150px; }
+.student-link > span:last-child { max-width: min(32ch, 52vw); text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.student-identity > div { min-width: 0; }
+.report-sheet, .dialog-body { overflow-wrap: anywhere; }
 .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .pagination > div { display: flex; gap: 5px; }
 .pagination .icon-only { width: 34px; height: 34px; min-height: 34px; }

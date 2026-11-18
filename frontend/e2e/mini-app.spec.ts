@@ -74,7 +74,15 @@ test('manager mobile view has no administrative navigation and saves a mark', as
   expect(mark!.y).toBeGreaterThan(730)
   expect(mark!.y + mark!.height).toBeLessThanOrEqual(navigation!.y + 6)
   await expect(page.getByRole('link', { name: 'Настройки' })).toHaveCount(0)
+  let sends = 0
+  await page.route('**/api/v1/reports/send-now', async route => { sends++; await route.continue() })
+  await page.getByRole('button', { name: 'Отправить отчёт сейчас' }).dblclick()
+  await expect(page.getByText('✅ Отчёт успешно отправлен')).toBeVisible()
+  await expect(page.getByText(/Последняя отправка:/)).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  expect(sends).toBe(1)
   await page.getByRole('link', { name: 'Начать отметку' }).click()
+  await expect(page.getByRole('button', { name: 'Отправить отчёт сейчас' })).toBeVisible()
   await page.getByRole('button', { name: 'Присутствует · Громова Елена' }).click()
   await expect(page.getByRole('button', { name: 'Присутствует · Громова Елена' })).toHaveAttribute('aria-pressed', 'true')
   await page.reload()
@@ -89,6 +97,26 @@ test('manager mobile view has no administrative navigation and saves a mark', as
   await expect(page.getByText('Раздел недоступен')).toBeVisible()
   expect(adminRequests).toEqual([])
   expect(errors).toEqual([])
+})
+
+test('mobile owner can add, search and edit a full name after reloading', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await launch(page, 101)
+  await page.goto('/students?class=1')
+  const original = 'Абдуллаев Мухаммад Али Абдуллаевич ибн Хасан Каримов'
+  const revised = "Oʻtkir G‘ulom O'Connor-García Али Хасан"
+  await page.getByRole('button', { name: 'Добавить ученика' }).click()
+  await page.getByLabel('Полное имя ученика').fill(original)
+  await page.getByRole('dialog').getByRole('button', { name: 'Добавить', exact: true }).click()
+  await expect(page.getByRole('button', { name: original, exact: true })).toBeVisible()
+  await page.reload()
+  await page.getByRole('textbox', { name: 'Поиск ученика' }).fill('мухаммад   али')
+  await page.getByRole('button', { name: `Редактировать · ${original}` }).click()
+  await page.getByLabel('Полное имя ученика').fill(revised)
+  await page.getByRole('dialog').getByRole('button', { name: 'Сохранить' }).click()
+  await page.getByRole('textbox', { name: 'Поиск ученика' }).fill('García')
+  await expect(page.getByRole('button', { name: revised, exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
 })
 
 test('recipient has access only to deliveries', async ({ page }) => {

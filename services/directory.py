@@ -4,6 +4,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unicodedata import category
 
 from sqlalchemy import func, select, update
 
@@ -19,10 +20,6 @@ def normalized(value: str) -> str:
     return ' '.join(value.split()).casefold()
 
 
-def name_key(last: str, first: str) -> str:
-    return normalized(f'{last} {first}')
-
-
 def sort_student(student):
     return normalized(student.name).replace('ё', 'е'), student.id
 
@@ -34,21 +31,19 @@ def bounded(text: str, max_length: int) -> str:
     return text
 
 
-def parse_students(value: str, many: bool) -> list[tuple[str, str]]:
-    lines = [line.strip() for line in value.splitlines() if line.strip()]
+MAX_STUDENT_NAME = 255
+
+
+def parse_students(value: str, many: bool) -> list[str]:
+    lines = [' '.join(line.split()) for line in value.splitlines() if line.strip()]
     if not lines or len(lines) > (100 if many else 1):
-        raise UserError('Отправьте от 1 до 100 строк.' if many else 'Введите фамилию и имя одной строкой.')
-    result = []
+        raise UserError('Отправьте от 1 до 100 строк.' if many else 'Введите полное имя ученика одной строкой.')
     for index, line in enumerate(lines, 1):
-        parts = line.split()
-        if len(parts) != 2 or any(
-            len(part) > 48 or not part[0].isalpha() or not part[-1].isalpha()
-            or any(not ch.isalpha() and ch not in "-'’" for ch in part)
-            for part in parts
+        if len(line) > MAX_STUDENT_NAME or not any(ch.isalpha() for ch in line) or any(
+            not (ch.isalpha() or category(ch).startswith('M') or ch in " -‐‑'’‘ʻʼ") for ch in line
         ):
-            raise UserError(f'Строка {index}. Введите фамилию и имя через пробел, до 48 букв в каждой части.')
-        result.append((parts[0], parts[1]))
-    return result
+            raise UserError(f'Строка {index}. Введите до {MAX_STUDENT_NAME} символов. Допустимы буквы, пробелы, дефисы и апострофы.')
+    return lines
 
 
 class Directory:
@@ -121,15 +116,15 @@ class Directory:
             existing = set(await session.scalars(select(Student.active_name_key).where(
                 Student.class_id == class_id, Student.is_active)))
             added, duplicates = [], []
-            for last, first in names:
-                key = name_key(last, first)
+            for name in names:
+                key = normalized(name)
                 if key in existing:
-                    duplicates.append(f'{last} {first}')
+                    duplicates.append(name)
                     continue
                 existing.add(key)
-                added.append(f'{last} {first}')
+                added.append(name)
                 if not preview:
-                    student = Student(last_name=last, first_name=first, class_id=class_id, active_name_key=key)
+                    student = Student(full_name=name, class_id=class_id, active_name_key=key)
                     session.add(student)
                     await session.flush()
                     session.add(Enrollment(student_id=student.id, class_id=class_id, starts_on=self.today()))
@@ -144,8 +139,8 @@ class Directory:
                 raise UserError('Ученик уже в архиве или недоступен.')
             class_id = student.class_id if new_class is None else new_class
             await self.owner_class(session, telegram_id, class_id)
-            last, first = name or (student.last_name, student.first_name)
-            key = name_key(last, first)
+            full_name = name if name is not None else student.name
+            key = normalized(full_name)
             other = await session.scalar(select(Student.id).where(
                 Student.class_id == class_id, Student.active_name_key == key, Student.id != student_id))
             if other and not archive:
@@ -168,7 +163,7 @@ class Directory:
                 else:
                     latest.ends_before = effective
                     session.add(Enrollment(student_id=student_id, class_id=class_id, starts_on=effective))
-            student.class_id, student.last_name, student.first_name = class_id, last, first
+            student.class_id, student.full_name = class_id, full_name
             student.is_active = not archive
             student.active_name_key = None if archive else key
             audit(session, actor, 'student.archived' if archive else 'student.updated', 'student', student_id,
@@ -184,7 +179,7 @@ class Directory:
             await self.owner_class(session, telegram_id, student.class_id)
             if student.is_active:
                 return student
-            key = name_key(student.last_name, student.first_name)
+            key = normalized(student.name)
             if await session.scalar(select(Student.id).where(Student.class_id == student.class_id,
                                                               Student.active_name_key == key)):
                 raise UserError('В этом классе уже есть ученик с таким именем.')
@@ -280,7 +275,7 @@ class Directory:
             actor, _ = await self.owner_class(session, telegram_id, class_id)
             permission_fields = {'history': 'can_view_history', 'correction': 'can_edit_history',
                                  'statistics': 'can_view_statistics', 'timetable': 'can_edit_timetable',
-                                 'report_view': 'can_view_reports'}
+                                 'report_view': 'can_view_reports', 'report_send': 'can_send_reports'}
             permission, _, setting = operation.rpartition('_')
             permission_field = permission_fields.get(permission) if setting in ('on', 'off') else None
             if not permission_field and operation not in {'manager_add', 'manager_remove', 'recipient_add', 'recipient_remove'}:

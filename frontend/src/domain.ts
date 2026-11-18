@@ -11,7 +11,7 @@ export const statuses = [
 export const statusOrder = [1, 2, 3, 4, 0]
 export const colors = ['#94a3b8', '#1aaa82', '#5c86ed', '#e7a63d', '#e36f82']
 export const roles: Record<string, string> = { OWNER: 'Владелец', MANAGER: 'Ответственный', REPORT_RECIPIENT: 'Получатель', CLASS_MEMBER: 'Участник класса', USER: 'Пользователь' }
-export const deliveryLabels: Record<string, string> = { scheduled: 'По расписанию', manual: 'Вручную', reminder: 'Напоминание', sent: 'Доставлено', failed: 'Ошибка', uncertain: 'Не подтверждено', sending: 'Отправляется', retry: 'Ожидает повтора', cancelled: 'Отменено' }
+export const deliveryLabels: Record<string, string> = { scheduled: 'По расписанию', manual: 'Вручную', reminder: 'Напоминание', sent: 'Принято Telegram', failed: 'Ошибка', uncertain: 'Не подтверждено', sending: 'Отправляется', retry: 'Ожидает повтора', cancelled: 'Отменено' }
 export const activities: Record<string, string> = {
   'user.started': 'Пользователь запустил бота', 'user.added': 'Пользователь добавлен по ID',
   'user.blocked': 'Доступ заблокирован', 'user.unblocked': 'Доступ восстановлен',
