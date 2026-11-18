@@ -5,7 +5,7 @@ from secrets import token_hex
 from bot.common import PAGE, back, button, navigation, paginate, title
 from services.directory import parse_students
 from services.permissions import UserError
-from services.reports import DELIVERY_STATUS, WEEKDAYS
+from services.reports import DELIVERY_STATUS, WEEKDAYS, add_section
 
 
 SCHEDULE_FIELDS = {
@@ -68,8 +68,8 @@ def register(routes):
     async def add_students(ui, class_id, mass):
         async with ui.app.db.read() as session:
             _, school_class = await ui.directory.owner_class(session, ui.uid, class_id)
-        text = ('Отправьте до 100 строк. В каждой строке — фамилия и имя.' if mass else
-                'Введите фамилию и имя, например Иванов Иван.')
+        text = ('Отправьте до 100 строк. В каждой строке — полное имя одного ученика.' if mass else
+                'Введите полное имя ученика одной строкой (до 255 символов).')
         await ui.prompt(f'{title("➕ Добавление учеников", school_class)}\n\n{text}', 'add_students', (class_id, bool(mass)),
                         ('students', class_id))
 
@@ -81,11 +81,12 @@ def register(routes):
             raise UserError('Все указанные ученики уже есть в этом классе.')
         header = f'🎓 <b>Проверьте список</b>\nДобавится: {len(added)} · Дубликатов: {len(duplicates)}\n\n'
         lines = [f'{n}. {escape(name)}' for n, name in enumerate(added, 1)]
-        if len('\n'.join(lines)) > 3500:
-            await ui.bot.send_message(ui.uid, header + '\n'.join(lines[:len(lines) // 2]))
-            lines = lines[len(lines) // 2:]
+        last, previous = add_section(header, [], header, '', lines)
+        for part in previous:
+            await ui.bot.send_message(ui.uid, part)
+        if previous:
             ui.panel = None
-        await ui.confirm(header + '\n'.join(lines), 'stuapply', (class_id,), ('students', class_id),
+        await ui.confirm(last, 'stuapply', (class_id,), ('students', class_id),
                          label='Добавить', payload=names)
 
     @routes.route('stuapply', int, owner=True, confirmed=True)
@@ -142,13 +143,13 @@ def register(routes):
         if not student.is_active:
             raise UserError('Ученик в архиве.')
         await ui.show(f'✏️ <b>{escape(student.name)}</b>\n🏷 {escape(school_class.name)}', [
-            [button('⌨️ Изменить фамилию и имя', 'stuname', student.id)],
+            [button('⌨️ Изменить полное имя', 'stuname', student.id)],
             [button('🏷 Перевести в другой класс', 'stumove', student.id, 0)], back('stucard', student.id),
         ])
 
     @routes.route('stuname', int, owner=True)
     async def name_prompt(ui, student_id):
-        await ui.prompt('Введите новые фамилию и имя через пробел.', 'student_name', (student_id,), ('stuedit', student_id))
+        await ui.prompt('Введите полное имя ученика (до 255 символов).', 'student_name', (student_id,), ('stuedit', student_id))
 
     @routes.input('student_name', owner=True)
     async def save_name(ui, value, student_id):
@@ -254,12 +255,13 @@ def register(routes):
     async def deliveries(ui, class_id, page):
         rows, page, total = await ui.reports.history(ui.uid, class_id, page, PAGE)
         lines = []
-        for item, telegram_id in rows:
+        for item, telegram_id, sender_id, sender_name in rows:
             kind = ('Напоминание' if item.dispatch_key.startswith('reminder_') else
                     'Отчёт вручную' if item.dispatch_key.startswith('manual_') else 'Отчёт по расписанию')
             time = ui.attendance.local(item.sent_at or item.created_at).strftime('%H:%M')
             error = f'\n{escape(item.error_message)}' if item.error_message else ''
-            lines.append(f'<b>{item.report_date:%d.%m.%Y} · {time}</b> · {kind}\nTelegram ID: <code>{telegram_id}</code> · '
+            sender = f' · Отправитель: {escape(sender_name or str(sender_id))}' if sender_id else ''
+            lines.append(f'<b>{item.report_date:%d.%m.%Y} · {time}</b> · {kind}{sender}\nTelegram ID: <code>{telegram_id}</code> · '
                          f'{DELIVERY_STATUS[item.status]} · {item.parts_sent}/{item.parts_total}{error}')
         await ui.show('📜 <b>История доставок</b>\n\n' + ('\n\n'.join(lines) or 'Отправок пока нет.'),
                       [*navigation(page, total, 'delivery', class_id), back('schedule', class_id)])

@@ -14,7 +14,7 @@ def school_class(value, *, can_history=True):
 
 
 def student(value):
-    return {'id': value.id, 'name': value.name, 'class_id': value.class_id, 'active': value.is_active,
+    return {'id': value.id, 'name': value.name, 'full_name': value.name, 'class_id': value.class_id, 'active': value.is_active,
             'updated_at': timestamp(value.updated_at)}
 
 

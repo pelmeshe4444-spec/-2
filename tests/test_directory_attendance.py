@@ -25,7 +25,7 @@ async def test_roles_and_class_isolation(app, schools):
     with pytest.raises(Forbidden):
         await app.attendance.daily(MANAGER, b.id, MONDAY)
     with pytest.raises(Forbidden):
-        await app.directory.add_students(MANAGER, a.id, [('Иванов', 'Иван')])
+        await app.directory.add_students(MANAGER, a.id, ['Иванов Иван'])
     with pytest.raises(Forbidden):
         await app.reports.latest(MANAGER, a.id)
     assert await app.reports.latest(MANAGER, b.id) == []
@@ -56,7 +56,7 @@ async def test_add_and_bulk_preview_commit_and_duplicate_protection(app, schools
     assert await app.directory.add_students(OWNER, a.id, names) == (added, duplicate)
     names = [s.name for s in (await app.directory.students(OWNER, a.id))[1]]
     assert names == ['Ёлкин Иван', 'Иванов Иван', 'Петров Александр']
-    assert len((await app.directory.add_students(OWNER, b.id, [('Иванов', 'Иван')]))[0]) == 1
+    assert len((await app.directory.add_students(OWNER, b.id, ['Иванов Иван']))[0]) == 1
     with pytest.raises(UserError):
         parse_students('— нет имени', False)
 
@@ -90,7 +90,7 @@ async def test_mark_reason_bulk_and_concurrent_edit(app, schools):
 
 async def test_archive_preserves_individual_history_and_removes_today(app, schools):
     a, _ = schools
-    await app.directory.add_students(OWNER, a.id, [('Иванов', 'Иван')])
+    await app.directory.add_students(OWNER, a.id, ['Иванов Иван'])
     student = (await app.directory.students(OWNER, a.id))[1][0]
     await app.attendance.mark(OWNER, a.id, MONDAY, student.id, Status.SICK)
     await app.directory.edit_student(OWNER, student.id, archive=True)
@@ -102,7 +102,7 @@ async def test_archive_preserves_individual_history_and_removes_today(app, schoo
 
 async def test_transfer_keeps_history_and_controls_manager_access(app, schools):
     a, b = schools
-    await app.directory.add_students(OWNER, a.id, [('Иванов', 'Иван')])
+    await app.directory.add_students(OWNER, a.id, ['Иванов Иван'])
     await app.directory.access(OWNER, MANAGER, a.id, 'manager_add')
     student = (await app.directory.students(OWNER, a.id))[1][0]
     await app.attendance.mark(OWNER, a.id, MONDAY, student.id, Status.SICK)

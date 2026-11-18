@@ -22,7 +22,7 @@ from backend import presentation as view
 from backend.admin_routes import admin_routes
 from backend.auth import InvalidInitData, TelegramAuth
 from backend.schemas import (AdminAccessInput, BlockInput, ClassInput, MarkInput, NamesInput, ScheduleInput,
-                             SendInput, SettingsInput, StudentInput, UserInput)
+                             SendInput, SendNowInput, SettingsInput, StudentInput, UserInput)
 from backend.school_routes import school_routes
 from config import ROOT
 from database.models import AttendanceChange, ClassMembership, ManagerAssignment, ReportRecipient, SchoolClass, SchoolSettings, User
@@ -222,7 +222,8 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
                 'today': core.attendance.today(), 'timezone': settings['timezone'], 'sqlite': db.engine.dialect.name == 'sqlite',
                 'managed': [{**view.school_class(item, can_history=item.id in history),
                              'can_edit_history': owner or assignments[item.id].can_edit_history,
-                             'can_view_statistics': owner or assignments[item.id].can_view_statistics} for item in managed],
+                             'can_view_statistics': owner or assignments[item.id].can_view_statistics,
+                             'can_send_reports': owner or assignments[item.id].can_send_reports} for item in managed],
                 'reports': [{**view.school_class(item), 'can_view_reports': item.id in viewer_ids}
                             for item in sorted(report_classes.values(), key=lambda row: row.name_key)],
                 'member': view.school_class(member_class, can_history=False) if member_class else None}
@@ -255,8 +256,8 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
         return await team(uid, class_id)
 
     @api.get('/api/classes/{class_id}/students')
-    async def students(class_id: int, uid: Owner):
-        _, students = await core.directory.students(uid, class_id, include_archived=True)
+    async def students(class_id: int, uid: Owner, q: Annotated[str, Query(max_length=255)] = ''):
+        _, students = await core.directory.students(uid, class_id, query=q, include_archived=True)
         _, entries = await core.attendance.daily(uid, class_id, core.attendance.today())
         marks = {entry.student.id: entry for entry in entries}
         return [{**view.student(item), 'status': int(marks[item.id].status) if item.id in marks else 0,
@@ -279,7 +280,7 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
 
     @api.patch('/api/students/{student_id}')
     async def edit_student(student_id: int, body: StudentInput, uid: Owner):
-        name = parse_students(body.name, False)[0] if body.name is not None else None
+        name = parse_students(body.full_name, False)[0] if body.full_name is not None else None
         return view.student(await core.directory.edit_student(uid, student_id, name=name, new_class=body.class_id))
 
     @api.delete('/api/students/{student_id}')
@@ -371,7 +372,8 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
                    'can_edit_timetable': assignments[item.id].can_edit_timetable,
                    'can_edit_history': assignments[item.id].can_edit_history,
                    'can_view_statistics': assignments[item.id].can_view_statistics,
-                   'can_view_reports': assignments[item.id].can_view_reports} for item, history in managed],
+                   'can_view_reports': assignments[item.id].can_view_reports,
+                   'can_send_reports': assignments[item.id].can_send_reports} for item, history in managed],
                 'received': [view.school_class(item) for item in received],
                 'member': view.school_class(school) if school else None}
 
@@ -406,15 +408,17 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
 
     @api.post('/api/classes/{class_id}/send')
     async def send_report(class_id: int, body: SendInput, uid: Owner):
-        _, schedule = await core.reports.schedule(uid, class_id)
-        today = core.attendance.today()
-        day = body.day or today
-        if day > today:
-            raise UserError('Нельзя отправить отчёт за будущую дату.')
-        key = 'manual_' + body.request_id
         async with telegram_sender() as bot:
-            await core.reports.dispatch(bot, schedule.id, day, key, manual_actor=uid)
-        return await core.reports.manual_result(uid, class_id, schedule.id, day, key)
+            return await core.reports.send_now(bot, uid, class_id, 'manual_' + body.request_id, body.day)
+
+    @api.post('/api/reports/send-now')
+    async def send_now(body: SendNowInput, uid: Account):
+        async with telegram_sender() as bot:
+            return await core.reports.send_now(bot, uid, body.class_id, 'manual_' + body.request_id)
+
+    @api.get('/api/classes/{class_id}/reports/last-manual')
+    async def last_manual_report(class_id: int, uid: Account):
+        return {'sent_at': view.timestamp(await core.reports.manual_status(uid, class_id))}
 
     @api.get('/api/classes/{class_id}/deliveries')
     async def deliveries(class_id: int, uid: Owner, page: Annotated[int, Query(ge=0, le=100000)] = 0):
@@ -422,9 +426,11 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
         return {'page': page, 'total': total, 'items': [
             {'id': item.id, 'day': item.report_date, 'telegram_id': telegram_id, 'status': item.status,
              'time': view.timestamp(item.sent_at or item.created_at), 'error': item.error_message,
+             'sent_at': view.timestamp(item.sent_at), 'initiated_by': sender_id, 'initiated_by_name': sender_name,
+             'telegram_message_id': item.telegram_message_id,
              'parts_sent': item.parts_sent, 'parts_total': item.parts_total,
              'kind': 'reminder' if item.dispatch_key.startswith('reminder_') else 'manual' if item.dispatch_key.startswith('manual_') else 'scheduled'}
-            for item, telegram_id in items]}
+            for item, telegram_id, sender_id, sender_name in items]}
 
     @api.get('/api/classes/{class_id}/report')
     async def report(class_id: int, uid: Account, day: str = ''):

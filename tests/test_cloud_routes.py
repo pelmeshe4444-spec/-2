@@ -13,7 +13,7 @@ from test_telegram_flow import TelegramSession
 
 async def test_webhook_scheduler_and_pages_cors(app, schools, monkeypatch, caplog):
     first, _ = schools
-    await app.directory.add_students(OWNER, first.id, [('Пробный', 'Ученик')])
+    await app.directory.add_students(OWNER, first.id, ['Пробный Ученик'])
     url = app.db.engine.url.render_as_string(hide_password=False)
     frontend = 'https://example.github.io'
     config = Config(TOKEN, OWNER, app.attendance.zone, url, mini_app_url=frontend + '/attendance/',
@@ -68,4 +68,4 @@ async def test_webhook_scheduler_and_pages_cors(app, schools, monkeypatch, caplo
             [delivery] = (await http.get(f'{base}/deliveries', headers=owner)).json()['items']
             assert delivery['kind'] == 'scheduled' and delivery['status'] == 'sent' and delivery['day'] == MONDAY.isoformat()
             assert 'Пробный Ученик' in session.panels[OWNER].text
-            assert 'Не отмечены' in session.panels[OWNER].text
+            assert 'НЕ ОТМЕЧЕНЫ' in session.panels[OWNER].text

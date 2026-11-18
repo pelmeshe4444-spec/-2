@@ -69,6 +69,22 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build the Render Docker image
         run: docker build -t attendance:ci .
+      - name: Seed a student and an attendance mark before the upgrade
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker run --rm --network "${{ job.services.postgres.network }}" \
+            --env DATABASE_URL=postgresql://attendance:attendance-ci@postgres/attendance \
+            attendance:ci python -m alembic upgrade 0004
+          docker exec -i "$POSTGRES_CONTAINER" psql -U attendance -d attendance -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO classes (id, name, name_key, is_active) VALUES (801, 'QA Archive', 'qa archive', false);
+          INSERT INTO users (id, telegram_id, created_at) VALUES (802, 6000, '2026-01-05');
+          INSERT INTO students (id, last_name, first_name, class_id, is_active, created_at, updated_at)
+          VALUES (803, 'Иванов', 'Иван', 801, false, '2026-01-05', '2026-01-05');
+          INSERT INTO enrollments (student_id, class_id, starts_on) VALUES (803, 801, '2026-01-05');
+          INSERT INTO attendance (student_id, date, status, marked_by, updated_at)
+          VALUES (803, '2026-01-05', 2, 802, '2026-01-05');
+          SQL
       - name: Verify the container binds to PORT and serves the API and frontend
         run: |
           docker run --detach --name attendance-ci --publish 127.0.0.1:14183:14183 \
@@ -81,7 +97,12 @@ jobs:
             http://127.0.0.1:14183/api/health | grep -F '{"status":"ok"}'
           curl --fail --silent --show-error http://127.0.0.1:14183/ | grep -F '<title>Attendance</title>'
       - name: Verify administrative writes persist across a backend restart
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
+          docker exec "$POSTGRES_CONTAINER" psql -U attendance -d attendance -Atc \
+            'SELECT s.full_name, a.status, e.class_id FROM students s JOIN attendance a ON a.student_id = s.id JOIN enrollments e ON e.student_id = s.id WHERE s.id = 803' \
+            | grep -Fx 'Иванов Иван|2|801'
           python3 tests/docker_admin_smoke.py
           docker restart attendance-ci
           curl --fail --silent --show-error --retry 12 --retry-delay 2 --retry-all-errors \

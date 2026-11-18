@@ -12,7 +12,7 @@ from sqlalchemy import select
 from database.models import ReportDelivery, User
 from services.attendance import Status
 from services.permissions import Forbidden, UserError
-from services.reports import detailed_report, excel_report
+from services.reports import detailed_report, excel_report, safe_report_parts
 from conftest import MANAGER, MONDAY, OWNER, RECIPIENT, VISITOR
 
 
@@ -25,6 +25,7 @@ class Sender:
         self.messages.append((chat_id, text, kwargs))
         if chat_id in self.failures:
             raise self.failures[chat_id]
+        return SimpleNamespace(message_id=len(self.messages))
 
 
 def at(app, hour, minute):
@@ -33,7 +34,7 @@ def at(app, hour, minute):
 
 async def test_report_totals_escape_and_xlsx(app, schools):
     a, _ = schools
-    await app.directory.add_students(OWNER, a.id, [('Иванов', 'Иван'), ('Ким', 'Юлия'), ('Чен', 'Ян')])
+    await app.directory.add_students(OWNER, a.id, ['Иванов Иван', 'Ким Юлия', 'Чен Ян'])
     _, students = await app.directory.students(OWNER, a.id)
     await app.attendance.mark(OWNER, a.id, MONDAY, students[0].id, Status.EXCUSED, reason='=1+1 <семья> & школа')
     await app.attendance.mark(OWNER, a.id, MONDAY, students[1].id, Status.PRESENT)
@@ -41,25 +42,27 @@ async def test_report_totals_escape_and_xlsx(app, schools):
     parts = detailed_report('<9-А>', MONDAY, entries, at(app, 8, 30))
     assert len(parts) == 1
     report = parts[0]
-    for expected in ('Всего учеников: 3', 'Присутствуют (1)', 'Не отмечены (1)', 'По уважительной причине (1)',
-                     'Отсутствуют без причины (0)', 'Болеют (0)', '&lt;9-А&gt;', '=1+1 &lt;семья&gt; &amp; школа'):
+    for expected in ('Всего учеников: 3', 'ПРИСУТСТВУЮТ: 1', 'НЕ ОТМЕЧЕНЫ (1)', 'ПО УВАЖИТЕЛЬНОЙ ПРИЧИНЕ (1)',
+                     'ОТСУТСТВУЮТ БЕЗ ПРИЧИНЫ (0)', 'БОЛЕЮТ (0)', '&lt;9-А&gt;', 'Нет'):
         assert expected in report
-    assert all(report.count(student.name) == 1 for student in students)
+    assert students[1].name not in report and 'семья' not in report
+    assert all(report.count(student.name) == 1 for student in (students[0], students[2]))
     result = load_workbook(BytesIO(excel_report(a.name, {MONDAY: entries})))
-    assert result['Посещаемость']['E2'].data_type == 's'
-    assert result['Посещаемость']['E2'].value == '=1+1 <семья> & школа'
+    details = list(result['Посещаемость'].values)
+    assert details[1][2:] == (None, 'Присутствует', 1)
+    assert {row[2] for row in details[2:]} == {students[0].name, students[2].name}
     row = list(result['Сводка'].values)[1]
     assert row[1] == sum(row[2:]) == 3
 
 
 def test_long_report_keeps_sections_order_and_limits():
-    entries = [SimpleNamespace(student=SimpleNamespace(name=f'Ученик {i:03d}'), status=Status.SICK,
+    entries = [SimpleNamespace(student=SimpleNamespace(name=f'Ученик {i:03d} ' + 'Длинное имя ' * 17), status=Status.SICK,
                                reason='Причина & 💬 ' * 20) for i in range(70)]
     report = detailed_report('9-А', MONDAY, entries, datetime.now())
     assert len(report) > 1
     assert all(len(part.encode('utf-16-le')) <= 7800 for part in report)
     assert all('ОТЧЁТ О ПОСЕЩАЕМОСТИ' in part for part in report)
-    assert all('Болеют (70)' in part for part in report if 'Ученик' in part)
+    assert all('БОЛЕЮТ (70)' in part for part in report if 'Ученик' in part)
     merged = '\n'.join(report)
     positions = [merged.index(entry.student.name) for entry in entries]
     assert positions == sorted(positions)
@@ -67,10 +70,19 @@ def test_long_report_keeps_sections_order_and_limits():
     assert 'Всего учеников: 70' in report[-1]
 
 
+def test_archive_redaction_preserves_parts_and_absence_names():
+    parts = ['✅ <b>Присутствуют (2)</b>\n1. Старое Имя\n2. Ещё Одно\n\n🤒 <b>Болеют (1)</b>\n1. Полное Имя Ученика — причина',
+             '⏳ <b>Не отмечены (1)</b>\n1. Неотмеченный С Пробелами']
+    first, second = safe_report_parts(parts)
+    assert '<b>Присутствуют: 2</b>' in first and 'Старое Имя' not in first and 'Ещё Одно' not in first
+    assert 'Полное Имя Ученика' in first and 'причина' not in first
+    assert second == parts[1]
+
+
 async def test_reminders_schedule_catchup_and_no_duplicate(app, schools):
     a, b = schools
     sender = Sender()
-    await app.directory.add_students(OWNER, a.id, [('Иванов', 'Иван')])
+    await app.directory.add_students(OWNER, a.id, ['Иванов Иван'])
     await app.directory.access(OWNER, MANAGER, a.id, 'manager_add')
     await app.directory.access(OWNER, VISITOR, b.id, 'manager_add')
     await app.directory.access(OWNER, RECIPIENT, a.id, 'recipient_add')
@@ -91,7 +103,7 @@ async def test_reminders_schedule_catchup_and_no_duplicate(app, schools):
     await app.reports.recover()
     await app.reports.tick(sender, late)
     assert len(sender.messages) == 4
-    assert 'Не отмечены (1)' in (await app.reports.latest(RECIPIENT, a.id))[0]
+    assert 'НЕ ОТМЕЧЕНЫ (1)' in (await app.reports.latest(RECIPIENT, a.id))[0]
     with pytest.raises(Forbidden):
         await app.reports.latest(RECIPIENT, b.id)
     async with app.db.read() as session:
@@ -129,7 +141,7 @@ async def test_delivery_errors_do_not_stop_other_recipients(app, schools):
     assert len(sender.messages) == 3
     rows, _, size = await app.reports.history(OWNER, a.id, 0, 10)
     assert size == 3
-    assert all(row.error_message for row, _ in rows if row.status != 'sent')
+    assert all(row.error_message for row, *_ in rows if row.status != 'sent')
 
 
 async def test_schedule_retries_explicit_temporary_rejection_once(app, schools):
@@ -139,9 +151,10 @@ async def test_schedule_retries_explicit_temporary_rejection_once(app, schools):
 
     class RetryOnce(Sender):
         async def send_message(self, chat_id, text, **kwargs):
-            await super().send_message(chat_id, text, **kwargs)
+            message = await super().send_message(chat_id, text, **kwargs)
             if len(self.messages) == 1:
                 raise TelegramRetryAfter(SendMessage(chat_id=chat_id, text=text), 'wait', retry_after=0)
+            return message
 
     sender = RetryOnce()
     await app.reports.tick(sender, at(app, 8, 30))
@@ -176,9 +189,9 @@ async def test_snapshot_cleared_after_replacement_and_revocation(app, schools):
     for key in ('manual_one', 'manual_two'):
         assert (await app.reports.dispatch(sender, schedule.id, MONDAY, key, manual_actor=OWNER))[RECIPIENT] == 'sent'
     rows, _, _ = await app.reports.history(OWNER, a.id, 0, 10)
-    assert sum(bool(row.body) for row, _ in rows) == 1
+    assert sum(bool(row.body) for row, *_ in rows) == 1
     await app.directory.access(OWNER, RECIPIENT, a.id, 'recipient_remove')
     with pytest.raises(Forbidden):
         await app.reports.latest(RECIPIENT, a.id)
     rows, _, _ = await app.reports.history(OWNER, a.id, 0, 10)
-    assert all(row.body is None for row, _ in rows)
+    assert all(row.body is None for row, *_ in rows)

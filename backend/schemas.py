@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from services.attendance import Status
 
@@ -15,13 +15,13 @@ class ClassInput(Input):
 
 
 class NamesInput(Input):
-    names: str = Field(min_length=1, max_length=10000)
+    names: str = Field(min_length=1, max_length=25600, validation_alias=AliasChoices('names', 'full_name'))
     bulk: bool = False
     preview: bool = False
 
 
 class StudentInput(Input):
-    name: str | None = Field(default=None, max_length=97)
+    full_name: str | None = Field(default=None, max_length=1024, validation_alias=AliasChoices('full_name', 'name'))
     class_id: int | None = Field(default=None, gt=0)
 
 
@@ -58,6 +58,11 @@ class SendInput(Input):
     day: date | None = None
 
 
+class SendNowInput(Input):
+    class_id: int = Field(gt=0)
+    request_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+
+
 class SettingsInput(Input):
     school: str = Field(min_length=1, max_length=120)
     system_name: str | None = Field(default=None, min_length=1, max_length=40)
@@ -77,4 +82,5 @@ class SettingsInput(Input):
 class AdminAccessInput(AccessInput):
     operation: Literal['manager_add', 'manager_remove', 'recipient_add', 'recipient_remove',
                        'history_on', 'history_off', 'correction_on', 'correction_off',
-                       'statistics_on', 'statistics_off', 'timetable_on', 'timetable_off', 'report_view_on', 'report_view_off']
+                       'statistics_on', 'statistics_off', 'timetable_on', 'timetable_off', 'report_view_on', 'report_view_off',
+                       'report_send_on', 'report_send_off']
