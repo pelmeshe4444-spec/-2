@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 
 import uvicorn
@@ -17,6 +18,8 @@ def main(argv=None):
     if not 1 <= args.port <= 65535:
         parser.error('PORT должен быть числом от 1 до 65535.')
     config = Config.load()
+    logging.basicConfig(level=config.log_level, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+    logging.getLogger('aiogram.event').setLevel(logging.WARNING)
     migrate(config.db_url)
     uvicorn.run(create_api(config, Database(config.db_url)), host=args.host, port=args.port, access_log=False,
                 forwarded_allow_ips=os.getenv('FORWARDED_ALLOW_IPS', '127.0.0.1'))

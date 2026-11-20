@@ -11,6 +11,8 @@ services:
         value: '3.13.5'
       - key: TIMEZONE
         value: Asia/Tashkent
+      - key: TELEGRAM_UPDATES_MODE
+        value: webhook
       - key: DATABASE_URL
         sync: false
       - key: BOT_TOKEN

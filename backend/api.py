@@ -76,6 +76,17 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     @asynccontextmanager
     async def lifespan(_):
         try:
+            if config.updates_mode == 'webhook':
+                try:
+                    async with telegram_sender() as bot:
+                        if not await asyncio.wait_for(bot.set_webhook(
+                            url=config.webhook_url, secret_token=config.webhook_secret,
+                            allowed_updates=['message', 'callback_query'], drop_pending_updates=False), timeout=15):
+                            raise RuntimeError('Telegram webhook registration failed.')
+                except Exception as exc:
+                    log.error('telegram_webhook configuration_failed error=%s', type(exc).__name__)
+                    raise RuntimeError('Telegram webhook configuration failed.') from None
+                log.info('telegram_webhook configured mode=webhook')
             yield
         finally:
             await db.engine.dispose()
@@ -335,6 +346,13 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
         _, entries = await core.attendance.finish(uid, class_id, parse_date(day))
         return {'counts': view.totals(counts(entries))}
 
+    @api.get('/api/admin/recipient-candidates')
+    async def recipient_candidates(uid: Owner, class_id: Annotated[int, Query(gt=0)],
+                                   page: Annotated[int, Query(ge=0, le=100000)] = 0,
+                                   q: Annotated[str, Query(max_length=160)] = ''):
+        users, page, total = await core.directory.recipient_candidates(uid, class_id, page, q)
+        return {'users': [view.profile(user) for user in users], 'page': page, 'total': total}
+
     @api.get('/api/users')
     @api.get('/api/admin/users')
     async def users(uid: Owner, page: Annotated[int, Query(ge=0, le=100000)] = 0):
@@ -385,6 +403,8 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
     @api.patch('/api/admin/users/{target}/roles')
     async def change_access(target: int, body: AdminAccessInput, uid: Owner):
         user, changed = await core.directory.access(uid, target, body.class_id, body.operation)
+        if body.operation in {'recipient_add', 'recipient_remove'}:
+            log.info('recipient_assignment committed operation=%s changed=%s', body.operation, changed)
         if changed and target != uid and body.operation.endswith('_add') and user.started_at and not user.blocked:
             try:
                 async with telegram_sender() as bot:
