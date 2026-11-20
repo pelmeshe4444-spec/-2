@@ -29,6 +29,7 @@ async def fixtures(config, db):
     await app.directory.register(OWNER, 'owner', 'Алина Мирова')
     await app.directory.register(MANAGER, 'manager', 'Андрей Орлов')
     await app.directory.register(RECIPIENT, 'recipient', 'Ирина Соколова')
+    await app.directory.register(9_876_543_210, 'parent_without_class', 'Родитель без класса')
     a = await app.directory.add_class(OWNER, '10-В')
     await app.directory.add_class(OWNER, '9-А')
     await app.directory.access(OWNER, MANAGER, a.id, 'manager_add')

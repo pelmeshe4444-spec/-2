@@ -1,3 +1,4 @@
+import logging
 import re
 
 from sqlalchemy.engine import make_url
@@ -8,6 +9,8 @@ from database.session import Database
 
 
 config = Config.load()
+logging.basicConfig(level=config.log_level, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+logging.getLogger('aiogram.event').setLevel(logging.WARNING)
 if make_url(config.db_url).drivername != 'postgresql+asyncpg':
     raise RuntimeError('Render requires PostgreSQL in DATABASE_URL.')
 if not config.mini_app_url or not re.fullmatch(r'[A-Za-z0-9_-]{24,256}', config.webhook_secret):

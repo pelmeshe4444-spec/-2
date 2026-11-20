@@ -23,6 +23,24 @@ async function launch(page: Page, id: number, dark = false) {
   }, { initData: credential(id), dark })
 }
 
+test('owner assigns a registered parent without class membership and sees persistence after reload', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await launch(page, 101)
+  await page.goto('/schedule?class=1')
+  await expect(page.getByRole('heading', { name: 'Получатели отчётов', exact: true })).toBeVisible()
+  await page.getByLabel('Найти получателя').fill('parent_without_class')
+  await page.getByRole('button', { name: 'Добавить получателя Родитель без класса', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Удалить получателя Родитель без класса', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Добавить получателя Родитель без класса', exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Удалить получателя Родитель без класса', exact: true })).toBeVisible()
+  const membership = await page.request.get('/api/v1/users/9876543210', { headers: { Authorization: `tma ${credential(101)}` } })
+  expect((await membership.json()).member).toBeNull()
+  await page.getByRole('button', { name: 'Удалить получателя Родитель без класса', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Удалить', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Добавить получателя Родитель без класса', exact: true })).toBeVisible()
+})
+
 test('owner dashboard, bulk creation, statuses, and report scheduling use the REST API', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 980 })
   await launch(page, 101)

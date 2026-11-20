@@ -30,12 +30,14 @@ def cloud_routes(api, core, config, telegram_sender):
         except (ValueError, ValidationError):
             raise HTTPException(400, 'Неверный формат обновления.') from None
         try:
+            log.info('telegram_webhook received message=%s', update.message is not None)
             async with telegram_sender() as bot:
                 await dispatcher.feed_update(bot, update)
         except Exception as exc:
             log.error('Не удалось обработать обновление Telegram %s (%s)', update.update_id, type(exc).__name__)
             await record_event(core.db, 'webhook', False)
             raise HTTPException(503, 'Не удалось обработать обновление Telegram.') from None
+        log.info('telegram_webhook processed')
         return {'ok': True}
 
     @api.post('/api/internal/scheduler/run')

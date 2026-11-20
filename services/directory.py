@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
@@ -6,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unicodedata import category
 
-from sqlalchemy import func, select, update
+from sqlalchemy import String, cast, func, or_, select, update
 
 from database.models import (
     AuditLog, Enrollment, ManagerAssignment, ReportDelivery, ReportRecipient, ReportSchedule, SchoolClass,
@@ -14,6 +15,9 @@ from database.models import (
 )
 from services.permissions import UserError, audit
 from services.school_settings import school_settings, school_zone
+
+
+log = logging.getLogger(__name__)
 
 
 def normalized(value: str) -> str:
@@ -54,8 +58,11 @@ class Directory:
         return datetime.now(school_zone(self.zone)).date()
 
     async def register(self, telegram_id, username, full_name, *, started=True):
+        if type(telegram_id) is not int or not 0 < telegram_id < 2**52:
+            raise UserError('Укажите корректный числовой Telegram ID.')
         async with self.db.write() as session:
             user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+            created = user is None
             if user is None:
                 user = User(telegram_id=telegram_id)
                 session.add(user)
@@ -69,7 +76,9 @@ class Directory:
             elif (user.username, user.full_name) != (new_username, new_name):
                 audit(session, user, 'user.profile_updated', 'user', user.id)
             user.username, user.full_name = new_username, new_name
-            return first_start
+        log.info('telegram_registration committed created=%s first_start=%s started=%s',
+                 created, first_start, started)
+        return first_start
 
     async def add_class(self, telegram_id, value):
         name = bounded(value, 32)
@@ -270,6 +279,21 @@ class Directory:
                               .where(ReportRecipient.user_id == user.id).order_by(SchoolClass.name_key)))
             return user, managers, recipients
 
+    async def recipient_candidates(self, telegram_id, class_id, page, query=''):
+        async with self.db.read() as session:
+            await self.owner_class(session, telegram_id, class_id)
+            assigned = select(ReportRecipient.user_id).where(ReportRecipient.class_id == class_id)
+            statement = select(User).where(User.started_at.is_not(None), ~User.blocked, ~User.id.in_(assigned))
+            if query.strip():
+                term = query.strip().removeprefix('@')
+                statement = statement.where(or_(User.full_name.icontains(term, autoescape=True),
+                    User.username.icontains(term, autoescape=True), cast(User.telegram_id, String).contains(term, autoescape=True)))
+            total = await session.scalar(select(func.count()).select_from(statement.subquery()))
+            page = min(page, max(0, (total - 1) // 50))
+            users = list(await session.scalars(statement.order_by(User.id).offset(page * 50).limit(50)))
+        log.info('recipient_candidates loaded count=%s total=%s', len(users), total)
+        return users, page, total
+
     async def access(self, telegram_id, target_id, class_id, operation):
         async with self.db.write() as session:
             actor, _ = await self.owner_class(session, telegram_id, class_id)
@@ -286,6 +310,8 @@ class Directory:
             target = await session.scalar(select(User).where(User.telegram_id == target_id))
             if operation == 'recipient_add' and (target is None or target.started_at is None):
                 raise UserError('Получатель должен сначала запустить бота командой /start.')
+            if operation == 'recipient_add' and target.blocked:
+                raise UserError('Для получения отчётов восстановите доступ пользователя.')
             if target is None:
                 if operation != 'manager_add':
                     raise UserError('Назначение для этого пользователя не найдено.')

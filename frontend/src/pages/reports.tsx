@@ -118,6 +118,10 @@ function ScheduleEditor({ classId, initial }: { classId: number; initial: Schedu
 
 function Recipients({ classId }: { classId: number }) {
   const data = useData<Team>(`/classes/${classId}/access`)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  const candidates = useData<{ users: Person[]; page: number; total: number }>(
+    `/admin/recipient-candidates?class_id=${classId}&page=${page}&q=${encodeURIComponent(search)}`, 15000)
   const [target, setTarget] = useState('')
   const [remove, setRemove] = useState<Person>()
   const action = useAction()
@@ -127,6 +131,16 @@ function Recipients({ classId }: { classId: number }) {
   return <Panel title="Получатели отчётов" subtitle="Чтобы получать сообщения, пользователь должен нажать /start в боте.">
     {data.isPending ? <Pending/> : data.error ? <Failure error={data.error}/> : data.data.recipients.length ? <ul className="history-list">{data.data.recipients.map(({ user }) => <li key={user.id}>
       <div><strong>{user.name}</strong><small className="block muted">{user.blocked ? 'Заблокирован' : user.id}</small></div><Button variant="ghost" size="icon" aria-label={`Удалить получателя ${user.name}`} onClick={() => setRemove(user)}><X size={17}/></Button></li>)}</ul> : <Empty title="Получателей пока нет"/>}
+    <label className="field">Найти получателя<input maxLength={160} placeholder="Имя, @username или Telegram ID" value={search}
+      onChange={event => { setSearch(event.target.value); setPage(0) }}/></label>
+    {candidates.isPending ? <Pending/> : candidates.error ? <Failure error={candidates.error}/> : <>
+      {candidates.data.users.length ? <ul className="history-list">{candidates.data.users.map(user => <li key={user.id}>
+        <div><strong>{user.name}</strong><small className="block muted">{user.username && `@${user.username} · `}{user.id}</small></div>
+        <Button size="small" variant="outline" aria-label={`Добавить получателя ${user.name}`} disabled={action.busy}
+          onClick={() => change(user.id, 'recipient_add')}><Plus size={16}/> Добавить</Button>
+      </li>)}</ul> : <Empty title="Доступных получателей нет" description="Новый пользователь появится здесь после /start в боте. Членство в классе не требуется."/>}
+      <Pagination page={candidates.data.page} count={candidates.data.total} size={50} change={setPage}/>
+    </>}
     <form className="panel-form" onSubmit={async e => { e.preventDefault(); if (await change(Number(target), 'recipient_add')) setTarget('') }}>
       <label className="field">Telegram ID получателя<input maxLength={16} pattern="[0-9]+" inputMode="numeric" required value={target} onChange={e => setTarget(e.target.value)}/></label>
       <div className="toolbar"><Button disabled={action.busy}><Plus size={17}/> Добавить</Button><Button asChild variant="ghost"><Link to="/users"><UsersRound size={17}/> Пользователи</Link></Button></div>

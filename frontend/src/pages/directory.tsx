@@ -229,7 +229,7 @@ function AccessDialog({ target, classes, initialClass, close }: { target: number
           { label: 'Редактирование уроков', key: 'timetable', granted: manager.can_edit_timetable },
         ].map(item => <div key={item.key}><span>{item.label}</span><Button size="small" variant="outline" disabled={action.busy}
           aria-label={`${item.granted ? 'Запретить' : 'Разрешить'} · ${item.label}`} onClick={() => change(`${item.key}_${item.granted ? 'off' : 'on'}`)}>{item.granted ? 'Запретить' : 'Разрешить'}</Button></div>)}
-        <div><span>Получение отчётов в Telegram</span><Button size="small" variant={recipient ? 'outline' : 'primary'} disabled={action.busy || !query.data.started} onClick={() => recipient ? setConfirm({ text: 'Отключить отчёты для этого пользователя?', operation: 'recipient_remove' }) : change('recipient_add')}>{recipient ? 'Удалить' : 'Добавить'}</Button></div>
+        <div><span>Получение отчётов в Telegram</span><Button size="small" variant={recipient ? 'outline' : 'primary'} disabled={action.busy || (!recipient && (!query.data.started || query.data.blocked))} onClick={() => recipient ? setConfirm({ text: 'Отключить отчёты для этого пользователя?', operation: 'recipient_remove' }) : change('recipient_add')}>{recipient ? 'Удалить' : 'Добавить'}</Button></div>
         {!query.data.started && <p className="muted">Для получения отчётов требуется /start в боте.</p>}
       </div>}
       {confirm ? <div className="confirm-inline"><p>{confirm.text}</p><Button variant="outline" size="small" onClick={() => setConfirm(undefined)}>Отмена</Button><Button size="small" disabled={action.busy} onClick={() => change(confirm.operation)}>Подтвердить</Button></div> :

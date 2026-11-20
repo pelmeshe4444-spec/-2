@@ -45,6 +45,8 @@ def dispatcher(app):
 
 
 async def serve(config):
+    if config.updates_mode != 'polling':
+        raise ValueError('Режим webhook запускается через web_main.py.')
     db = Database(config.db_url)
     app = AttendanceApplication(db, config)
     dp = Dispatcher(events_isolation=SimpleEventIsolation())

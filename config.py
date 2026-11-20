@@ -42,6 +42,8 @@ class Config:
     init_data_ttl: int = 3600
     webhook_secret: str = field(default='', repr=False)
     scheduler_secret: str = field(default='', repr=False)
+    updates_mode: str = 'polling'
+    webhook_url: str = ''
 
     @property
     def frontend_origin(self):
@@ -81,5 +83,12 @@ class Config:
                 raise ValueError
         except ValueError:
             raise ValueError('Укажите срок действия INIT_DATA_TTL от 60 до 86400 секунд.') from None
+        mode = os.getenv('TELEGRAM_UPDATES_MODE', 'polling').strip()
+        if mode not in {'polling', 'webhook'}:
+            raise ValueError('TELEGRAM_UPDATES_MODE должен быть polling или webhook.')
+        webhook_url = os.getenv('RENDER_EXTERNAL_URL', '').rstrip('/') + '/api/telegram/webhook' if mode == 'webhook' else ''
+        secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
+        if mode == 'webhook' and (not secret or urlsplit(webhook_url).scheme != 'https' or not urlsplit(webhook_url).hostname):
+            raise ValueError('Для webhook настройте TELEGRAM_WEBHOOK_SECRET и RENDER_EXTERNAL_URL.')
         return cls(token, owner_id, zone, database_url(), level, app_url, ttl,
-                   os.getenv('TELEGRAM_WEBHOOK_SECRET', ''), os.getenv('SCHEDULER_SECRET', ''))
+                   secret, os.getenv('SCHEDULER_SECRET', ''), mode, webhook_url)

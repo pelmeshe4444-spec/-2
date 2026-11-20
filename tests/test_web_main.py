@@ -16,7 +16,7 @@ def test_web_main_binds_to_configured_port(monkeypatch, env_port, args, host, po
     else:
         monkeypatch.setenv('PORT', env_port)
     events = []
-    fake_config = SimpleNamespace(db_url='sqlite-test')
+    fake_config = SimpleNamespace(db_url='sqlite-test', log_level=20)
     monkeypatch.setattr(web_main.Config, 'load', lambda: fake_config)
     monkeypatch.setattr(web_main, 'migrate', lambda url: events.append(('migrate', url)))
     monkeypatch.setattr(web_main, 'Database', lambda url: url)

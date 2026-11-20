@@ -14,6 +14,20 @@ jobs:
   application-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: registration
+          POSTGRES_USER: attendance
+          POSTGRES_PASSWORD: attendance-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U attendance -d registration"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -31,6 +45,10 @@ jobs:
           .venv/bin/python -m pip check
       - name: Test the bot and API
         run: .venv/bin/python -m pytest -q
+      - name: Test Telegram registration and recipient assignment on PostgreSQL
+        env:
+          ATTENDANCE_REGISTRATION_TEST_DATABASE_URL: postgresql+asyncpg://attendance:attendance-ci@127.0.0.1:5432/registration
+        run: .venv/bin/python -m pytest tests/test_registration_recipients.py -q
       - name: Build and test the Mini App
         working-directory: frontend
         run: |
