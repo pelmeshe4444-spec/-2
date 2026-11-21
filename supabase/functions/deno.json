@@ -9,6 +9,6 @@
   "compilerOptions": { "strict": true, "lib": ["deno.window", "dom", "dom.iterable"] },
   "tasks": {
     "check": "deno check api/index.ts telegram-webhook/index.ts send-report/index.ts report-scheduler/index.ts",
-    "test": "deno test --allow-env --allow-read --allow-net=127.0.0.1,localhost ../tests"
+    "test": "deno test --allow-env --allow-read --allow-sys=umask --allow-net=127.0.0.1,localhost ../tests"
   }
 }
