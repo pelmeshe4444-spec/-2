@@ -90,37 +90,39 @@
 
 ## PostgreSQL
 
-Ниже первоначальная согласованная копия. Финальные количества и SHA-256 сравнение после ограничения записи отражаются в отчёте проверки.
+Финальная синхронизация выполнена после ограничения записи на Render. Все 25 таблиц совпали построчно; после живых тестов ни одна из 695 исходных строк не исчезла и не изменилась.
 
-| Render public table | Supabase public table | Строк в первоначальной копии | Состояние |
-|---|---|---:|---|
-| `alembic_version` | `alembic_version` | 1 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `announcements` | `announcements` | 0 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `attendance` | `attendance` | 74 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `attendance_history` | `attendance_history` | 80 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `audit_logs` | `audit_logs` | 211 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `class_join_requests` | `class_join_requests` | 16 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `class_memberships` | `class_memberships` | 6 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `class_timetables` | `class_timetables` | 1 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `classes` | `classes` | 2 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `enrollments` | `enrollments` | 38 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `lesson_time_slots` | `lesson_time_slots` | 0 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `manager_assignments` | `manager_assignments` | 3 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `notifications` | `notifications` | 25 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `report_deliveries` | `report_deliveries` | 3 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `report_recipients` | `report_recipients` | 1 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `report_schedules` | `report_schedules` | 2 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `school_settings` | `school_settings` | 1 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `students` | `students` | 38 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `subjects` | `subjects` | 17 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `system_events` | `system_events` | 55 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `timetable_change_history` | `timetable_change_history` | 2 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `timetable_exceptions` | `timetable_exceptions` | 0 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `timetable_lessons` | `timetable_lessons` | 32 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `user_roles` | `user_roles` | 4 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
-| `users` | `users` | 18 | Все поля/PK/FK/индексы сохранены; первоначальный fingerprint совпал |
+| Render public table → Supabase public table | Первоначально | Финально перенесено |
+|---|---:|---:|
+| `alembic_version` → `alembic_version` | 1 | 1 |
+| `announcements` → `announcements` | 0 | 0 |
+| `attendance` → `attendance` | 74 | 74 |
+| `attendance_history` → `attendance_history` | 80 | 80 |
+| `audit_logs` → `audit_logs` | 211 | 226 |
+| `class_join_requests` → `class_join_requests` | 16 | 16 |
+| `class_memberships` → `class_memberships` | 6 | 14 |
+| `class_timetables` → `class_timetables` | 1 | 1 |
+| `classes` → `classes` | 2 | 2 |
+| `enrollments` → `enrollments` | 38 | 38 |
+| `lesson_time_slots` → `lesson_time_slots` | 0 | 0 |
+| `manager_assignments` → `manager_assignments` | 3 | 3 |
+| `notifications` → `notifications` | 25 | 33 |
+| `report_deliveries` → `report_deliveries` | 3 | 5 |
+| `report_recipients` → `report_recipients` | 1 | 2 |
+| `report_schedules` → `report_schedules` | 2 | 2 |
+| `school_settings` → `school_settings` | 1 | 1 |
+| `students` → `students` | 38 | 38 |
+| `subjects` → `subjects` | 17 | 17 |
+| `system_events` → `system_events` | 55 | 84 |
+| `timetable_change_history` → `timetable_change_history` | 2 | 2 |
+| `timetable_exceptions` → `timetable_exceptions` | 0 | 0 |
+| `timetable_lessons` → `timetable_lessons` | 32 | 32 |
+| `user_roles` → `user_roles` | 4 | 5 |
+| `users` → `users` | 18 | 19 |
 
-Дополнительно созданы служебные таблицы `api_rate_limits`, `download_tickets`, `telegram_updates`, `background_leases`. RLS включён на всех 29 таблицах; клиентские grants отозваны. Нет Supabase Auth policies: доступ к данным разрешает проверяющая Telegram подпись Edge Function.
+Всего: 630 → 695 строк. Сохранены все 174 столбца, PK/FK, 57 индексов и точные 19 sequences. Сопоставлено 77 исходных ограничений; NOT NULL metadata проверены с учётом PG18/PG17. Дополнительно созданы api_rate_limits, download_tickets, telegram_updates, background_leases; все 29 таблиц закрыты для прямых клиентских обращений.
+
+Новая JSON backup включает все 29 таблиц и 19 serial states, а также исходный audit event database.backup. Секреты находятся в серверной конфигурации и Vault, не в JSON или frontend.
 
 ## Компоненты и настройки
 

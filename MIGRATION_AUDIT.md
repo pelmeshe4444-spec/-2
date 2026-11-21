@@ -4,7 +4,7 @@
 
 ## Подтверждённое начальное состояние
 
-Прерывание произошло до переключения. Основная ветка и Pages используют commit `38fe3c821351957d66bf59bf65fc7dab75dfda97`; webhook указывает на Render, старый workflow отправляет отчёты через Render. Поэтому наличие развёрнутых функций Supabase ещё не означает завершённую миграцию.
+Прерывание произошло до переключения. На момент возобновления основная ветка и Pages использовали commit `38fe3c821351957d66bf59bf65fc7dab75dfda97`; webhook указывал на Render, старый workflow отправлял отчёты через Render. Поэтому наличие развёрнутых функций Supabase ещё не означало завершённую миграцию.
 
 В Supabase первоначально перенесены все 25 public таблиц с построчными SHA-256 сравнениями. Подготовлены четыре Edge Functions, но Cron намеренно выключен до финальной синхронизации. Изменения TypeScript/CI ещё не были сохранены в основной ветке. На Render в это время могли появиться новые данные.
 
@@ -12,16 +12,16 @@
 
 | Компонент | Пробел при возобновлении | Исправление и проверка |
 |---|---|---|
-| GitHub | Реализация находилась только локально | Ветка `codex/supabase-migration`, PR, CI, merge; итоговые SHA в отчёте |
-| База | Первоначальная копия не охватывает последующие изменения | Короткий запрет записи, новый pg_dump snapshot, проверка конфликтов, сверка всех таблиц и sequences |
-| API | Требуется доказать полноту переноса | AST выявил 75 методов/путей; тест сравнивает реально зарегистрированный Router; функциональные PostgreSQL тесты |
-| Pages | Production VITE_API_URL ещё Render | Проверяемая сборка и публикация Supabase URL после финальной копии |
-| Telegram | Активен Render webhook | Переключить после синхронизации, проверить getWebhookInfo и настоящий `/start`; polling не включать |
-| Cron | На Supabase выключен; старый отправитель активен | Сначала отключить старый workflow и Render startup webhook, затем включить pg_cron и проверить pg_net и delivery |
-| Получатели | Необходимо сохранить исправление регистрации без членства | Числовой ID, started_at, owner-only назначение; отдельный интеграционный сценарий |
-| Резервная копия UI | SQLite-only кнопка скрывалась на PostgreSQL | Включена owner-only JSON копия PostgreSQL в закрытый Storage |
-| Безопасность pg_net | Managed PUBLIC ACL очереди нельзя считать приватным | В заголовках нет reusable secret: HMAC, timestamp, nonce с защитой повторного использования; secret в Vault |
-| Откат | Новый Render restart мог вернуть старый webhook | Отключение auto-deploy/startup webhook; read-only guard, сохранение исходной БД и backups |
+| GitHub | Реализация находилась только локально | PASS: PR #7/#8/#9 объединены; CI, deploy-edge и publish-pages успешны; SHA/IDs в отчёте |
+| База | Первоначальная копия не охватывала последующие изменения | PASS: запрет изменений, согласованный pg_dump, 695 строк и все fingerprints/counters совпали; реальный restore проверен |
+| API | Не было доказательства полноты переноса | PASS: AST выявил 75 методов/путей; реально зарегистрированный Router сопоставлен; PostgreSQL и production API проверены |
+| Pages | Production VITE_API_URL оставался Render | PASS: Supabase URL в опубликованном bundle, Render URL отсутствует; 20 живых browser checks |
+| Telegram | Был активен Render webhook | PASS: getWebhookInfo → Supabase, pending=0, native owner `/start` и открытие панели подтверждены |
+| Cron | На Supabase был выключен, старый отправитель активен | PASS: старый workflow удалён/отключён, startup webhook выключен; Cron активен, HTTP 200, реальная автоматическая доставка и отсутствие дублей |
+| Получатели | Требовалось сохранить регистрацию без membership | PASS: bigint ID, started_at, owner-only назначение; реальные candidates/assignment SQL плюс отдельный class-independent integration test |
+| Резервная копия UI | SQLite-only кнопка скрывалась на PostgreSQL | PASS: owner-only JSON 29 таблиц/19 counters, закрытый Storage, ticket и audit event проверены реально |
+| Безопасность pg_net | Managed PUBLIC ACL очереди нельзя считать приватным | PASS: HMAC/timestamp/nonce вместо reusable secret; Vault и net не доступны через Data API; защита replay проверена |
+| Откат | Render restart мог вернуть старый webhook | PASS: auto-deploy/startup webhook выключены, API maintenance guard проверен; исходная БД и проверенные backups сохранены |
 
 ## Исправленные несовместимости при переносе
 
@@ -44,3 +44,9 @@ Postgres параметры CASE приведены к явным типам; JS
 PR #7 объединён, main CI и деплой функций успешны. GitHub Pages опубликован с Supabase API, старого Render URL в рабочем bundle нет. Telegram webhook переключён без drop_pending_updates; пользователь подтвердил открытие панели владельца и диагностики из настоящего Telegram. Supabase Cron активен и получил HTTP 200 `{\"ok\":true}` от Edge Function, успешный запуск записан в PostgreSQL. Старый workflow отключён и удаляется из production-конфигурации. Render сохранён read-only, startup webhook и auto-deploy выключены.
 
 Резервная JSON-копия приложения дополнена четырьмя служебными таблицами и точными serial states, чтобы восстановление сохраняло дедупликацию updates и не использовало заново удалённые ID. Экспорт XLSX сохраняет прежнее событие `statistics.exported` в журнале. Финальные проверки реальной доставки и опубликованного интерфейса отражаются отдельно в итоговом отчёте.
+
+## Финальное подтверждение
+
+Все рабочие пути переключены на Supabase. Настоящий owner запуск из Telegram подтверждён пользователем; опубликованный React прошёл 20 живых браузерных проверок с HTTP 200 данных всех разделов и без запросов к Render. Ручной и автоматический отчёты приняты Telegram (message_id 128 и 129); повторные действия не создали дублей. После QA исходные 695 строк остаются неизменными, тестовые настройки и доступ выключены.
+
+Заключительный diff с прежним кодом выявил и восстановил также событие database.backup, отдельно проверенное regression test и опубликованным API. Работающие данные, существующие таблицы и исходный Render не удалялись. Legacy Python/Docker сохранены для отката; текущий production runtime их не вызывает. Финальные deployment IDs, результаты, 3 группы непроверенных native сценариев и планы эксплуатации приведены в FINAL_VERIFICATION_REPORT.md.
