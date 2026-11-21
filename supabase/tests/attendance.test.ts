@@ -229,9 +229,16 @@ Deno.test({ name: 'PostgreSQL integration verifies every application workflow th
         assert.equal(response.status, 200)
         assert(response.headers.get('Content-Type')?.includes('spreadsheetml'))
         assert((await response.arrayBuffer()).byteLength > 1000)
+        const [reserved] = await sql`SELECT nextval('users_id_seq') AS n`
         const backup = await json('/backup')
         assert.equal(backup.format, 'attendance-postgresql-json-v1')
         assert(backup.tables.users.some((row: Row) => row.telegram_id === userId))
+        const actualTables = await sql`SELECT tablename FROM pg_tables WHERE schemaname='public'`
+        assert.deepEqual(Object.keys(backup.tables).sort(), actualTables.map(row => row.tablename).sort())
+        assert.equal(backup.sequences.users_id_seq.last_value, Number(reserved.n))
+        assert.equal(backup.sequences.users_id_seq.is_called, true)
+        assert(backup.tables.telegram_updates.some((row: Row) => row.update_id === 901))
+        assert(backup.tables.audit_logs.some((row: Row) => row.action === 'statistics.exported'))
       })
       await test.step('RLS and SQL privileges deny direct anonymous access to all Attendance data', async () => {
         const [permission] = await sql`SELECT has_table_privilege('anon','public.users','SELECT') AS allowed,
