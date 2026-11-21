@@ -1,13 +1,14 @@
 import { hex, HttpError } from './auth.ts'
-import { type Context, date, id, one, owner, type Router, type Row, rows, scope, storage } from './core.ts'
+import { audit, type Context, date, id, one, owner, type Router, type Row, rows, scope, storage } from './core.ts'
 import { counts, periodRoster } from './attendance.ts'
 import { reportKinds, reportLabels, statusLabels } from './reports.ts'
 import { workbook } from './xlsx.ts'
 
-const sourceTables = ['alembic_version', 'announcements', 'attendance', 'attendance_history', 'audit_logs', 'class_join_requests',
+const backupTables = ['alembic_version', 'announcements', 'attendance', 'attendance_history', 'audit_logs', 'class_join_requests',
   'class_memberships', 'class_timetables', 'classes', 'enrollments', 'lesson_time_slots', 'manager_assignments', 'notifications',
   'report_deliveries', 'report_recipients', 'report_schedules', 'school_settings', 'students', 'subjects', 'system_events',
-  'timetable_change_history', 'timetable_exceptions', 'timetable_lessons', 'user_roles', 'users']
+  'timetable_change_history', 'timetable_exceptions', 'timetable_lessons', 'user_roles', 'users',
+  'api_rate_limits', 'download_tickets', 'telegram_updates', 'background_leases']
 async function excel(context: Context, payload: Row): Promise<Response> {
   const school = await scope(context, payload.class_id, 'manage', true)
   const byDay = await periodRoster(context, payload.class_id, payload.start, payload.end)
@@ -21,13 +22,19 @@ async function excel(context: Context, payload: Row): Promise<Response> {
   }
   const data = workbook([{ name: 'Посещаемость', widths: [15, 22, 65, 33, 17], rows: details },
     { name: 'Сводка', widths: [15, 12, 20, 14, 32, 32, 18], rows: summary }])
+  await audit(context.db, context.user, 'statistics.exported', 'class', payload.class_id)
   return new Response(new Uint8Array(data).buffer, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'Content-Disposition': `attachment; filename="${payload.name}"` } })
 }
 async function backup(context: Context, name: string): Promise<Response> {
   const tables: Row = {}
-  for (const table of sourceTables) tables[table] = await rows(context.db, 'SELECT * FROM ' + table)
-  const data = JSON.stringify({ format: 'attendance-postgresql-json-v1', created_at: new Date().toISOString(), tables })
+  for (const table of backupTables) tables[table] = await rows(context.db, 'SELECT * FROM ' + table)
+  const sequences: Row = {}
+  for (const sequence of await rows(context.db, "SELECT sequencename FROM pg_sequences WHERE schemaname='public'")) {
+    if (!/^[a-z_]+$/.test(sequence.sequencename)) throw new HttpError(503, 'Не удалось проверить структуру резервной копии.')
+    sequences[sequence.sequencename] = await one(context.db, 'SELECT last_value,is_called FROM public.' + sequence.sequencename)
+  }
+  const data = JSON.stringify({ format: 'attendance-postgresql-json-v1', created_at: new Date().toISOString(), tables, sequences })
   if (!context.config.test) {
     const { error } = await storage(context.config).storage.from('attendance-backups').upload(
       `manual/${context.today}/${crypto.randomUUID()}.json`, new Blob([data], { type: 'application/json' }), { upsert: false })
