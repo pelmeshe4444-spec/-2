@@ -27,6 +27,7 @@ async function excel(context: Context, payload: Row): Promise<Response> {
     'Content-Disposition': `attachment; filename="${payload.name}"` } })
 }
 async function backup(context: Context, name: string): Promise<Response> {
+  await audit(context.db, context.user, 'database.backup', 'database')
   const tables: Row = {}
   for (const table of backupTables) tables[table] = await rows(context.db, 'SELECT * FROM ' + table)
   const sequences: Row = {}

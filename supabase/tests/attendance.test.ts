@@ -239,6 +239,7 @@ Deno.test({ name: 'PostgreSQL integration verifies every application workflow th
         assert.equal(backup.sequences.users_id_seq.is_called, true)
         assert(backup.tables.telegram_updates.some((row: Row) => row.update_id === 901))
         assert(backup.tables.audit_logs.some((row: Row) => row.action === 'statistics.exported'))
+        assert(backup.tables.audit_logs.some((row: Row) => row.action === 'database.backup'))
       })
       await test.step('RLS and SQL privileges deny direct anonymous access to all Attendance data', async () => {
         const [permission] = await sql`SELECT has_table_privilege('anon','public.users','SELECT') AS allowed,
