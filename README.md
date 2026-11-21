@@ -2,6 +2,16 @@
 
 Attendance ведёт посещаемость школы внутри Telegram Mini App. React-интерфейс и бот используют один backend и одну базу. Бот открывает приложение из `/start` и кнопки меню, доставляет автоматические отчёты и напоминания. Для управления откройте Mini App.
 
+## Supabase и GitHub Pages
+
+Новая серверная реализация находится в `supabase/functions`, миграции PostgreSQL — в `supabase/migrations`. Это TypeScript/Deno, без Python в рабочем запросе. Mini App сохраняет существующий React-интерфейс и размещается на GitHub Pages с `VITE_BASE_PATH=/-2/` и `VITE_API_URL=https://vuwucpvbaaaguksdbznr.supabase.co/functions/v1/api`.
+
+Актуальное состояние переключения и доказательства: [аудит](MIGRATION_AUDIT.md), [матрица API и данных](MIGRATION_MATRIX.md), [отчёт проверки](FINAL_VERIFICATION_REPORT.md). Разделы Python/Docker ниже сохранены для локальной работы и отката.
+
+Серверные переменные перечислены в `supabase/.env.example`. Их задают через Supabase Secrets; BOT_TOKEN и service credentials не передают в VITE. Telegram initData проверяет сам backend; это не Supabase Auth JWT. Клиентским ролям Data API запрещён доступ к школьным таблицам. Cron использует защищённую серверную функцию с Vault/HMAC.
+
+Проверка нового backend: `deno task --config supabase/functions/deno.json check` и `deno task --config supabase/functions/deno.json test`. Для PostgreSQL integration задайте `ATTENDANCE_TEST_DATABASE_URL` только для отдельной базы **attendance_test** на loopback. Fixtures пересоздают исключительно её public schema; production URL отклоняется. Frontend: `npm ci`, `npm run test`, `npm run build`, `npm run test:e2e` из `frontend` (Deno в PATH). GitHub Actions выполняет эти проверки с PostgreSQL 17 до развёртывания.
+
 ## Возможности
 
 - **Владелец.** Главная со сводкой, диаграммой и последними действиями. Управление учениками, классами, доступом, расписанием и данными школы. Статистика, личная история ученика, Excel, резервная копия SQLite и журнал действий.

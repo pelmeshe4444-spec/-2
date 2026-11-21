@@ -1,0 +1,13 @@
+project_id = "attendance"
+
+[functions.api]
+verify_jwt = false
+
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.send-report]
+verify_jwt = false
+
+[functions.report-scheduler]
+verify_jwt = false

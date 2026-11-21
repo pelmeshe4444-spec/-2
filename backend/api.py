@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -112,6 +113,12 @@ def create_api(config, db, *, sender=None, dist=None, desktop=None):
             return JSONResponse({'detail': 'Запрос слишком большой.'}, status_code=413)
         if request.scope['path'].startswith('/api/v1/'):
             request.scope['path'] = '/api/' + request.scope['path'][8:]
+        if os.getenv('ATTENDANCE_READ_ONLY') == 'true' and request.scope['path'].startswith('/api/') and (
+            request.method not in {'GET', 'HEAD', 'OPTIONS'} or request.scope['path'] == '/api/me'
+        ):
+            return JSONResponse({'detail': 'Выполняется перенос Attendance. Повторите через несколько минут.'},
+                                status_code=503, headers={'Retry-After': '60', 'Cache-Control': 'no-store',
+                                                         'Access-Control-Allow-Origin': config.frontend_origin})
         zone = None
         is_api = request.scope['path'].startswith('/api/')
         try:

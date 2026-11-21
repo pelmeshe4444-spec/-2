@@ -1,0 +1,14 @@
+{
+  "imports": {
+    "postgres": "npm:postgres@3.4.7",
+    "zod": "npm:zod@4.6.7",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.119.0",
+    "exceljs": "npm:exceljs@4.4.0",
+    "fflate": "npm:fflate@0.8.2"
+  },
+  "compilerOptions": { "strict": true, "lib": ["deno.window", "dom", "dom.iterable"] },
+  "tasks": {
+    "check": "deno check api/index.ts telegram-webhook/index.ts send-report/index.ts report-scheduler/index.ts",
+    "test": "deno test --allow-env --allow-read --allow-sys --allow-net=127.0.0.1,localhost ../tests"
+  }
+}
