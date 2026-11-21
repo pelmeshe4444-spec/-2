@@ -15,6 +15,7 @@ data/
 *.xlsx
 *.log
 node_modules/
+supabase/.temp/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/

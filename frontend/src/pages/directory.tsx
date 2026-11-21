@@ -257,9 +257,9 @@ export function SettingsPage({ mode, setMode }: { mode: 'auto' | 'light' | 'dark
     {settings.isPending ? <Pending/> : settings.error ? <Failure error={settings.error}/> : <SchoolPreferencesForm initial={settings.data}/>}
     <div className="dashboard-grid">
       <Panel title="Внешний вид"><div className="panel-form"><label className="field">Цветовая схема<select value={mode} onChange={e => setMode(e.target.value as typeof mode)}><option value="auto">Как в Telegram</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label></div></Panel></div>
-    <Panel title="Администрирование"><div className="quick-links">{me.sqlite && <button onClick={() => setConfirm(true)}><ArrowDownToLine size={19}/><span>Резервная копия SQLite</span><ArrowRight size={16}/></button>}<Link to="/audit"><History size={19}/><span>Журнал действий</span><ArrowRight size={16}/></Link></div></Panel>
+    <Panel title="Администрирование"><div className="quick-links"><button onClick={() => setConfirm(true)}><ArrowDownToLine size={19}/><span>{me.sqlite ? 'Резервная копия SQLite' : 'Резервная копия PostgreSQL'}</span><ArrowRight size={16}/></button><Link to="/audit"><History size={19}/><span>Журнал действий</span><ArrowRight size={16}/></Link></div></Panel>
     {confirm && <Confirm title="Скачать резервную копию?" text="Файл содержит данные школы. Храните его в месте с ограниченным доступом." label="Скачать" busy={action.busy} onClose={() => setConfirm(false)} onConfirm={async () => {
-      const result = await action.run(async () => { await download('/backup', 'attendance.sqlite3'); return true }, 'Резервная копия подготовлена')
+      const result = await action.run(async () => { await download('/backup', me.sqlite ? 'attendance.sqlite3' : 'attendance-postgresql.json'); return true }, 'Резервная копия подготовлена')
       if (result) setConfirm(false)
     }} />}
   </>

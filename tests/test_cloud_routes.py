@@ -11,6 +11,22 @@ from test_mini_app_api import TOKEN, auth
 from test_telegram_flow import TelegramSession
 
 
+async def test_migration_freeze_blocks_writers_and_keeps_health(app, monkeypatch):
+    config = Config(TOKEN, OWNER, app.attendance.zone, app.db.engine.url.render_as_string(hide_password=False),
+                    mini_app_url='https://example.github.io/attendance/', webhook_secret='test', scheduler_secret='test')
+    monkeypatch.setenv('ATTENDANCE_READ_ONLY', 'true')
+    api = create_api(config, app.db)
+    async with AsyncClient(transport=ASGITransport(app=api), base_url='https://attendance.test') as http:
+        assert (await http.get('/api/v1/health')).json() == {'status': 'ok'}
+        for path in ['/api/v1/me', '/api/me']:
+            response = await http.get(path, headers=auth(OWNER))
+            assert response.status_code == 503
+            assert response.headers['retry-after'] == '60'
+        for path in ['/api/classes', '/api/telegram/webhook', '/api/internal/scheduler/run']:
+            assert (await http.post(path, json={})).status_code == 503
+        assert (await http.get('/api/v1/classes', headers=auth(OWNER))).status_code == 200
+
+
 async def test_webhook_scheduler_and_pages_cors(app, schools, monkeypatch, caplog):
     first, _ = schools
     await app.directory.add_students(OWNER, first.id, ['Пробный Ученик'])
